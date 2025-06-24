@@ -290,33 +290,52 @@ class GCNNet(torch.nn.Module):
         self.layer2 = GCNConv(dim, dim)
         
     def forward(self, drug):
-        feats, edge_index, batch = drug.x, drug.edge_index, drug.batch
+        feats, edge_index, batch = drug.x.float(), drug.edge_index, drug.batch
         x = self.layer1(feats, edge_index)
         x = self.layer2(x, edge_index)
         x = gap(x, batch)
         return x
 
 
-from egnn_pytorch import EGNN
+from process.egnn import EGNN
 
-class EGNNNet(torch.nn.Module):
-    def __init__(self, dim=78):
-        super(EGNNNet, self).__init__()
-        self.layer1 = EGNN(dim)
-        self.layer2 = EGNN(dim)
+class EGNN_Encoder(nn.Module):
+    def __init__(
+        self,
+        in_node_nf=27,
+        hidden_nf=64,
+        out_node_nf=64,
+        in_edge_nf=6,
+        device="cuda",
+        act_fn=nn.SiLU(),
+        n_layers=12,
+        residual=True,
+        attention=True,
+        normalize=False,
+        tanh=False,
+    ):
+        super(EGNN_Encoder, self).__init__()
 
-    def forward(self, drug):
-        feats = drug.x.unsqueeze(0).float()
-        coors = torch.tensor(drug.pos).to(drug.x.device).float()
-        
-        feats, coors = self.layer1(feats, coors)
-        feats, coors = self.layer2(feats, coors)
-        
-        feats = feats.squeeze(0)
-        batch = torch.zeros(feats.shape[0], dtype=torch.long, device=feats.device)
+        # Initialize the EGNN model
+        self.egnn = EGNN(
+            in_node_nf,
+            hidden_nf,
+            out_node_nf,
+            in_edge_nf,
+            device,
+            act_fn,
+            n_layers,
+            residual,
+            attention,
+            normalize,
+            tanh,
+        )
 
-        graph_emb = gap(feats, batch)
-        return graph_emb
+    def forward(self, h, x, edges, edge_attr):
+        # Pass through EGNN layers to get updated node features and coordinates
+        h, x = self.egnn(h, x, edges, edge_attr)
+
+        return h
     
     
 class FPNet(torch.nn.Module):
@@ -345,8 +364,8 @@ class DTA_test(torch.nn.Module):
             self.drug_net = GCNNet()
             drug_out = 78
         elif feature_type == '3D-GNN':
-            self.drug_net = EGNNNet()
-            drug_out = 78
+            self.drug_net = EGNN_Encoder(n_layers=2)
+            drug_out = 64
         elif feature_type == 'CNN':
             self.drug_net = CNNNet()
             drug_out = 64
@@ -374,4 +393,71 @@ class DTA_test(torch.nn.Module):
         xc = torch.cat((drug_feats, target_feats), 1)
         xc = self.predictor(xc)
         return xc
+    
 
+class Property_test(torch.nn.Module):
+    def __init__(self, feature_type, num_tasks):
+        super(Property_test, self).__init__()
+        
+        if feature_type == 'FP-Morgan':
+            self.molnet = FPNet(dim=1024)
+            mol_out = 64
+        elif feature_type == 'FP-MACCS':
+            self.molnet = FPNet(dim=167)
+            mol_out = 64
+        elif feature_type == '2D-GNN':
+            self.molnet = GCNNet(dim=133)
+            mol_out = 133
+        elif feature_type == '3D-GNN':
+            self.molnet = EGNN_Encoder(n_layers=2)
+            mol_out = 64
+        elif feature_type == 'CNN':
+            self.molnet = CNNNet()
+            mol_out = 64
+            
+        self.mol_mlp = nn.Linear(mol_out, 256)
+        
+        self.predictor = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, num_tasks),
+        )
+    
+        
+    def forward(self, data):
+        mol_feats = self.molnet(data)
+        mol_feats = self.mol_mlp(mol_feats)
+        pred = self.predictor(mol_feats)
+        return pred
+    
+
+
+if __name__ == "__main__":
+    egnn = EGNN_Encoder(device='cpu')
+    
+    from process.t_graph import Graph_Featurizer
+    from openbabel import pybel
+    
+    lig = next(pybel.readfile("sdf", './1aq7_ligand.sdf'))
+    lig = pybel.readstring("smi", "CCCC")
+    ligand_features, ligand_coords = Graph_Featurizer().get_node_features(lig, source='ligand', complex_bool=False)
+    lig_edges, lig_attrs = Graph_Featurizer().get_bond_based_edges(lig)
+    print(ligand_features.shape, ligand_coords.shape, len(lig_edges), len(lig_attrs))
+    
+    lig.addh()
+    lig.make3D()
+    lig.localopt()
+    lig.write("test.sdf")
+    
+    ligand_features=torch.tensor(ligand_features, dtype=torch.float)
+    ligand_coords = torch.tensor(ligand_coords, dtype=torch.float32)
+    ligand_edges=torch.tensor(lig_edges, dtype=torch.long).t().contiguous()
+    ligand_edge_attr=torch.tensor(lig_attrs, dtype=torch.float)
+    
+    print(ligand_features.shape, ligand_coords.shape, ligand_edges.shape, ligand_edge_attr.shape)
+    
+    egnn(ligand_features, ligand_coords, ligand_edges, ligand_edge_attr)
