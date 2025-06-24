@@ -491,4 +491,6 @@ dmypy.json
 .pyre/
 
 # data
-.data/
+data/
+logs/
+wandb/
