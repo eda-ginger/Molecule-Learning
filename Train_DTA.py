@@ -307,6 +307,14 @@ def Train_CV(args):
         for metric, avg_value in metrics.items():
             std_value = std_test_metrics[test_set][metric]
             logger.info(f"{metric}: {avg_value:.3f} (±{std_value:.2f})")
+    
+    # Save to result.log file
+    result_file = Path('logs') / Path(args.project) / "result.log"
+    with open(result_file, 'a+') as f:
+        for test_set, metrics in avg_test_metrics.items():
+            for metric, avg_value in metrics.items():
+                std_value = std_test_metrics[test_set][metric]
+                f.write(f"{test_set} {metric}: {avg_value:.3f} (±{std_value:.2f})\n")
 
 if __name__ == "__main__":
     args = set_config()
