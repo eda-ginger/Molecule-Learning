@@ -1,304 +1,369 @@
+import os
+import shutil
+import warnings
+warnings.filterwarnings(action='ignore')
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+import tensorflow as tf
+tf.get_logger().setLevel('ERROR')
+
+import argparse
+import numpy as np
+import pandas as pd
+import deepchem as dc
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
-import pickle
-import os
-import sys
-import numpy as np
-from pathlib import Path
-import argparse # For argparse.Namespace
-import logging # Added logging
+from torch_geometric.loader import DataLoader
+
 from tqdm import tqdm
-import wandb
-import json # Added for saving metrics
+# from loader import MoleculeDataset
+from utils.splitters import scaffold_split, random_split, random_scaffold_split
+from sklearn.metrics import roc_auc_score
 
-# Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+criterion = nn.BCEWithLogitsLoss(reduction = "none")
 
-from utils.tools import get_model
-from config import set_config # Keep for potential use, though args come from main.py
-from utils.tools import set_seed, get_device, count_parameters, save_checkpoint, load_checkpoint
-from utils.metrics import calculate_regression_metrics
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='"%(asctime)s [%(levelname)s] %(message)s"',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
-
-
-from torch_geometric.data import Dataset, Data, Batch
-
-class CustomDataset(Dataset):
-    def __init__(self, data_list):
-        self.data_list = data_list
-        
-    def __len__(self):
-        return len(self.data_list)
-    
-    def __getitem__(self, idx):
-        return self.data_list[idx]
-    
-    @staticmethod
-    def collate_fn(batch):
-        ligands = Batch.from_data_list([item['Drug_Rep'] for item in batch])
-        proteins = Batch.from_data_list([item['Target_Rep'] for item in batch])
-        return ligands, proteins
-
-
-
-def train_one_epoch(model, train_loader, optimizer, loss_fn, device, epoch, fold_idx):
+def train(args, model, device, loader, optimizer):
     model.train()
-    total_loss = 0
-    
-    # Create progress bar
-    pbar = tqdm(train_loader, desc=f'Fold {fold_idx} - Epoch {epoch}', 
-                leave=True, dynamic_ncols=True)
-    
-    for batch_idx, inputs in enumerate(pbar):
-        ligands, sequences = inputs
-        affinities = ligands.y
-        
-        ligands = ligands.to(device)
-        sequences = sequences.to(device)
-        affinities = affinities.to(device)
+    total_loss = 0.0
+    total_batches = 0
 
+    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+        batch = batch.to(device)
+        # pred = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        pred = model(batch)
+        y = batch.y.view(pred.shape).to(torch.float64)
+
+        #Whether y is non-null or not.
+        is_valid = y**2 > 0
+        #Loss matrix
+        loss_mat = criterion(pred.double(), (y+1)/2)
+        #loss matrix after removing null target
+        loss_mat = torch.where(is_valid, loss_mat, torch.zeros(loss_mat.shape).to(loss_mat.device).to(loss_mat.dtype))
+            
         optimizer.zero_grad()
-        
-        predictions = model((ligands, sequences))
-        loss = loss_fn(predictions, affinities)
+        loss = torch.sum(loss_mat)/torch.sum(is_valid)
         loss.backward()
+
+        # Check for gradient issues
+        total_norm = 0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** (1. / 2)
+
         optimizer.step()
-
-        total_loss += loss.item()
         
-        # Update progress bar with current loss
-        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+        total_loss += loss.item()
+        total_batches += 1
 
-    avg_loss = total_loss / len(train_loader)
-    logger.info(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}")
+    avg_loss = total_loss / total_batches
+    print(f"Average training loss: {avg_loss:.4f}")
     return avg_loss
 
-def evaluate(model, data_loader, loss_fn, device):
+
+def eval(args, model, device, loader):
     model.eval()
-    total_loss = 0
-    all_preds = []
-    all_reals = []
+    y_true = []
+    y_scores = []
 
-    with torch.no_grad():
-        for batch_idx, inputs in enumerate(data_loader):
-            ligands, sequences = inputs
-            affinities = ligands.y
+    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+        batch = batch.to(device)
 
-            ligands = ligands.to(device)
-            sequences = sequences.to(device)
-            affinities = affinities.to(device)
+        with torch.no_grad():
+            # pred = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+            pred = model(batch)
 
-            predictions = model((ligands, sequences))
-            loss = loss_fn(predictions, affinities)
-            
-            total_loss += loss.item()
-            all_preds.append(predictions.detach())
-            all_reals.append(affinities.detach())
-            
-    avg_loss = total_loss / len(data_loader)
-    all_preds_cat = torch.cat(all_preds, dim=0)
-    all_reals_cat = torch.cat(all_reals, dim=0)
-    
-    eval_metrics = calculate_regression_metrics(all_preds_cat, all_reals_cat)
-    return avg_loss, eval_metrics
+        y_true.append(batch.y.view(pred.shape))
+        y_scores.append(pred)
 
-def Train_CV(args):
-    device = get_device(args)
+    y_true = torch.cat(y_true, dim = 0).cpu().numpy()
+    y_scores = torch.cat(y_scores, dim = 0).cpu().numpy()
     
-    # path
-    cache_path = Path(args.cache_dir) / 'molnet'
-    data_path = cache_path / args.data_name
-    logger.info(f"Data path: {data_path}")
-    
-    # load dataset            
-    trn_pkl = cache_path / f'trn.pkl'
-    with open(trn_pkl, 'rb') as f:
-        trn_samples = pickle.load(f)
-    train_dataset = CustomDataset(trn_samples)
+    roc_list = []
+    for i in range(y_true.shape[1]):
+        #AUC is only defined when there is at least one positive data.
+        if np.sum(y_true[:,i] == 1) > 0 and np.sum(y_true[:,i] == -1) > 0:
+            is_valid = y_true[:,i]**2 > 0
+            roc_list.append(roc_auc_score((y_true[is_valid,i] + 1)/2, y_scores[is_valid,i]))
 
-    val_pkl = cache_path / f'val.pkl'
-    with open(val_pkl, 'rb') as f:
-        val_samples = pickle.load(f)
-    val_dataset = CustomDataset(val_samples)
-    logger.info(f"TRN: {len(train_dataset)}, VAL: {len(val_dataset)}")
-    
-    tst_pkl = cache_path / f'tst.pkl'
-    with open(tst_pkl, 'rb') as f:
-        tst_samples = pickle.load(f)
-    tst_dataset = CustomDataset(tst_samples)
-    logger.info(f"TST: {len(tst_dataset)}")
-    
-    # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
-    #                     collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers)
-    
-    # for batch_idx, inputs in enumerate(val_loader):
-    #     ligands, sequences = inputs
-    #     print(ligands.x.shape)
-    #     print(sequences.x.shape)
-    #     print(ligands.y.shape)
-    #     break
-    
-    # raise Exception('stop')
-    
-    # main loop
-    seeds = [16875, 33928, 40000]
-    for s_idx, seed in enumerate(seeds):
-        fold_idx = s_idx + 1
+    if len(roc_list) < y_true.shape[1]:
+        print("Some target is missing!")
+        print("Missing ratio: %f" %(1 - float(len(roc_list))/y_true.shape[1]))
 
-        # args are passed from main.py
-        logger.info(f"Seed: {seed}")
-        set_seed(seed)
-        g = torch.Generator()
-        g.manual_seed(seed)
+    return sum(roc_list)/len(roc_list) #y_true.shape[1]
+
+
+def main():
+    # Training settings
+    parser = argparse.ArgumentParser(description='PyTorch implementation of pre-training of graph neural networks')
+    parser.add_argument('--device', type=int, default=0,
+                        help='which gpu to use if any (default: 0)')
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='input batch size for training (default: 32)')
+    # parser.add_argument('--epochs', type=int, default=50,
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='number of epochs to train (default: 100)')
+    parser.add_argument('--lr', type=float, default=0.001,
+                        help='learning rate (default: 0.001)')
+    parser.add_argument('--lr_scale', type=float, default=1,
+                        help='relative learning rate for the feature extraction layer (default: 1)')
+    parser.add_argument('--decay', type=float, default=0,
+                        help='weight decay (default: 0)')
+    parser.add_argument('--num_layer', type=int, default=5,
+                        help='number of GNN message passing layers (default: 5).')
+    parser.add_argument('--emb_dim', type=int, default=300,
+                        help='embedding dimensions (default: 300)')
+    parser.add_argument('--dropout_ratio', type=float, default=0.5,
+                        help='dropout ratio (default: 0.5)')
+    parser.add_argument('--graph_pooling', type=str, default="mean",
+                        help='graph level pooling (sum, mean, max, set2set, attention)')
+    parser.add_argument('--JK', type=str, default="last",
+                        help='how the node features across layers are combined. last, sum, max or concat')
+    parser.add_argument('--gnn_type', type=str, default="gin")
+    parser.add_argument('--dataset', type=str, default = 'bace', help='root directory of dataset. For now, only classification.')
+    parser.add_argument('--input_model_file', type=str, default = '', help='filename to read the model (if there is any)')
+    parser.add_argument('--filename', type=str, default = '', help='output filename')
+    parser.add_argument('--seed', type=int, default=42, help = "Seed for splitting the dataset.")
+    parser.add_argument('--runseed', type=int, default=0, help = "Seed for minibatch selection, random initialization.")
+    parser.add_argument('--split', type = str, default="random", help = "random or scaffold or random_scaffold")
+    parser.add_argument('--eval_train', type=int, default = 0, help='evaluating training or not')
+    parser.add_argument('--num_workers', type=int, default = 4, help='number of workers for dataset loading')
+    args = parser.parse_args()
+
+    torch.manual_seed(args.runseed)
+    np.random.seed(args.runseed)
+    device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.runseed)
+
+    #Bunch of classification tasks
+    if args.dataset == "tox21":
+        num_tasks = 12
+    elif args.dataset == "hiv":
+        num_tasks = 1
+    elif args.dataset == "pcba":
+        num_tasks = 128
+    elif args.dataset == "muv":
+        num_tasks = 17
+    elif args.dataset == "bace":
+        num_tasks = 1
+    elif args.dataset == "bbbp":
+        num_tasks = 1
+    elif args.dataset == "toxcast":
+        num_tasks = 617
+    elif args.dataset == "sider":
+        num_tasks = 27
+    elif args.dataset == "clintox":
+        num_tasks = 2
+    elif args.dataset == "freesolv":
+        num_tasks = 1
+    elif args.dataset == "esol":
+        num_tasks = 1
+    elif args.dataset == "lipo":
+        num_tasks = 1
+    else:
+        raise ValueError("Invalid dataset name.")
+
+    #set up dataset
+    # from utils.loader import CustomMoleculeNet, MoleculeDataset
+    from utils.molecule_feature import CustomMoleculeNet
+    dataset = CustomMoleculeNet('dataset/', name=args.dataset.upper())
     
-        # Test datasets (TST)
-        overall_test_metrics = {'TST': []}
-
-        logger.info(f"\n--- Starting Fold {s_idx+1}/{len(seeds)} ---")
-
-        # Initialize wandb for each fold
-        if args.use_wandb:
-            wandb.init(
-                project=args.project,
-                name=f"Fold_{fold_idx}",
-                config=vars(args)
-            )
-            
-        # create dataloaders
-        trn_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, 
-                                collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers, generator=g)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
-                                collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers)
+    # dataset = CustomMoleculeNet('dataset/', name='bace'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='bbbp'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='hiv'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='tox21'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='toxcast'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='sider'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='clintox'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='freesolv'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='esol'.upper())
+    # dataset = CustomMoleculeNet('dataset/', name='lipo'.upper())
+    
+    
+    # smiles_list = pd.read_csv('dataset/' + 'bace' + '/processed/smiles.csv', header=None)[0].tolist()
+    # train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
+    # train_loader = DataLoader(dataset, batch_size=16, shuffle=True)    
+    # y_true = []
+    # for batch in train_loader:
+    #     # print(batch)
+    #     y_true.append(batch.y)
+    #     # break
+    
+    # y_true = torch.cat(y_true, dim = 0).cpu().numpy()
+    # y_true.shape
+    # y_true.sum(0)
+    
+    # roc_list = []
+    # for i in range(y_true.shape[1]):
+    #     # #AUC is only defined when there is at least one positive data.
+    #     # if np.sum(y_true[:,i] == 1) > 0 and np.sum(y_true[:,i] == -1) > 0:
+    #     #     is_valid = y_true[:,i]**2 > 0
+    #     #     roc_list.append(roc_auc_score((y_true[is_valid,i] + 1)/2, y_scores[is_valid,i]))
         
-        # create model
-        model = get_model(args).to(device)
-        logger.info(f"Feature: {args.feature} | Parameters: {count_parameters(model)}")
-        logger.info(f'Model Architecture:\n{model}')
-
-        optimizer = optim.AdamW(model.parameters())
-        loss_fn = nn.MSELoss(reduction='mean')
-
-        best_val_metric = float('inf')
-        epochs_no_improve = 0
-        start_epoch = 0
+    #     #AUC is only defined when there is at least one positive data.
+    #     positive_count = np.sum(y_true[:,i] == 1)
+    #     negative_count = np.sum(y_true[:,i] == -1)
         
-        fold_output_dir = Path('logs') / Path(args.project) / f"fold_{fold_idx}"
-        fold_output_dir.mkdir(parents=True, exist_ok=True)
+    #     if positive_count > 0 and negative_count > 0:
+    #         is_valid = y_true[:,i]**2 > 0
+    #         roc_list.append(roc_auc_score((y_true[is_valid,i] + 1)/2, y_scores[is_valid,i]))
+    #     else:
+    #         print(f"Task {i}: positive={positive_count}, negative={negative_count}")
 
-        # Training loop
-        logger.info(f"Starting training for fold {fold_idx} from epoch {start_epoch+1}")
-        for epoch in range(start_epoch + 1, args.n_epochs + 1):
-            train_loss = train_one_epoch(model, trn_loader, optimizer, loss_fn, device, epoch, fold_idx)
-            val_loss, val_metrics = evaluate(model, val_loader, loss_fn, device)
+    
+    print(dataset)
+    
+    if args.split == "scaffold":
+        smiles_list = pd.read_csv('dataset/' + args.dataset + '/processed/smiles.csv', header=None)[0].tolist()
+        train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
+        print("scaffold")
+    elif args.split == "random":
+        train_dataset, valid_dataset, test_dataset = random_split(dataset, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1, seed = args.seed)
+        print("random")
+    elif args.split == "random_scaffold":
+        smiles_list = pd.read_csv('dataset/' + args.dataset + '/processed/smiles.csv', header=None)[0].tolist()
+        train_dataset, valid_dataset, test_dataset = random_scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1, seed = args.seed)
+        print("random scaffold")
+    else:
+        raise ValueError("Invalid split option.")
 
-            if args.aim == 'rmse':
-                current_val_metric = val_metrics['rmse']
-            elif args.aim == 'mse':
-                current_val_metric = val_loss
-            else:
-                raise ValueError(f"Invalid aim: {args.aim}")
+    print(train_dataset[0])
 
-            if current_val_metric < best_val_metric:
-                logger.info(f"New best validation {args.aim.upper()}: {current_val_metric:.4f}")
-                best_val_metric = current_val_metric
-                epochs_no_improve = 0
-                
-                filename = 'checkpoint_last.pt'
-                save_checkpoint({
-                    'epoch': epoch,
-                    'state_dict': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'best_metric': best_val_metric,
-                    'args': vars(args) # Save args as dict
-                }, is_best=True, filename=filename, output_dir=fold_output_dir)
-            else:
-                epochs_no_improve += 1
-            
-            # Log losses to wandb
-            if args.use_wandb:
-                wandb.log({
-                    "train_loss": train_loss,
-                    "val_loss": val_loss})
+    # check label
+    def check_label(dt, name):
+        print(name)
+        dty = np.array(dt.y)
+        for i in range(dty.shape[1]):
+            #AUC is only defined when there is at least one positive data.
+            positive_count = np.sum(dty[:,i] == 1)
+            negative_count = np.sum(dty[:,i] == -1)
+            print(f"Task {i}: positive={positive_count}, negative={negative_count}")
+        print('-'*10)
 
-            if epochs_no_improve >= args.patience:
-                logger.info(f"Early stopping triggered at epoch {epoch} for fold {fold_idx}")
-                break
+    def check_model_params(model):
+        print("=== Model Parameter Statistics ===")
+        total_params = 0
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                param_count = param.numel()
+                total_params += param_count
+                print(f"{name}: {param_count} params, mean={param.data.mean():.4f}, std={param.data.std():.4f}")
+        print(f"Total trainable parameters: {total_params}")
+        print("="*40)
+
+    check_label(train_dataset, 'train')
+    check_label(valid_dataset, 'valid')
+    check_label(test_dataset, 'test')
+    
+    # loader
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers = args.num_workers)
+    val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
+
+    #set up model
+    from process.models import Property_test
+    print('num_tasks', num_tasks)
+    model = Property_test(feature_type='2D-GNN', num_tasks=num_tasks)
+    print(model)
+    
+    # Check model parameters
+    check_model_params(model)
+
+    # from process.model import GNN_graphpred
+    # model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
+    # if not args.input_model_file == "":
+    #     model.from_pretrained(args.input_model_file)
+    
+    model.to(device)
+
+    #set up optimizer
+    # #different learning rate for different part of GNN
+    # model_param_group = []
+    # model_param_group.append({"params": model.gnn.parameters()})
+    # if args.graph_pooling == "attention":
+    #     model_param_group.append({"params": model.pool.parameters(), "lr":args.lr*args.lr_scale})
+    # model_param_group.append({"params": model.graph_pred_linear.parameters(), "lr":args.lr*args.lr_scale})
+    # optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.decay)
+    print(optimizer)
+
+    # Add learning rate scheduler
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=10, verbose=True)
+    
+    # Early stopping
+    # patience = 20
+    # patience_counter = 0
+
+    train_acc_list = []
+    val_acc_list = []
+    test_acc_list = []
+    train_loss_list = []
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_model_state = None
+
+    for epoch in range(1, args.epochs+1):
+        print("====epoch " + str(epoch))
         
-        # fold finished
-        logger.info(f"Finished training for fold {fold_idx}. Best Val Metric ({args.aim.upper()}): {best_val_metric:.4f}")
+        # Training with loss tracking
+        train_loss = train(args, model, device, train_loader, optimizer)
+        train_loss_list.append(train_loss)
 
-        # evaluate best model on test sets
-        logger.info(f"Evaluating best model from fold {fold_idx} on test sets...")
-        best_model_path = fold_output_dir / "model_best.pt"
+        print("====Evaluation")
+        if args.eval_train:
+            train_acc = eval(args, model, device, train_loader)
+        else:
+            print("omit the training accuracy computation")
+            train_acc = 0
         
-        model_test = get_model(args).to(device)
-        model_test = load_checkpoint(best_model_path, model_test) 
-
-        # testing
-        test_loader = DataLoader(tst_dataset, batch_size=300, shuffle=False, 
-                                collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers)
-        _, test_metrics = evaluate(model_test, test_loader, loss_fn, device)
-        overall_test_metrics['TST'].append(test_metrics)
-            
-        # save fold's test metrics
-        fold_metrics_file = fold_output_dir / f"TST_metrics.json"
-        test_metrics_serializable = {k: float(v) for k, v in test_metrics.items()}
-        with open(fold_metrics_file, 'w') as f:
-            json.dump(test_metrics_serializable, f, indent=4)
-
-        if args.use_wandb:
-            wandb.log({
-                f"TST/rmse": test_metrics['rmse'],
-                f"TST/mae": test_metrics['mae'],
-                f"TST/sd": test_metrics['sd'],
-                f"TST/pcc": test_metrics['pcc'],
-                f"TST/r2": test_metrics['r2'],
-                f"TST/ci": test_metrics['ci']
-                })
-
-        # Finish wandb run for this fold
-        if args.use_wandb:
-            wandb.finish()
-
-    logger.info("Training and evaluation finished.")
-    
-    # Calculate average metrics across all folds
-    avg_test_metrics = {}
-    for test_set in ['TST']:
-        metrics_sum = {metric: 0.0 for metric in overall_test_metrics[test_set][0].keys()}
-        for fold_metrics in overall_test_metrics[test_set]:
-            for metric, value in fold_metrics.items():
-                metrics_sum[metric] += value
+        # Only evaluate validation performance during training
+        val_acc = eval(args, model, device, val_loader)
         
-        avg_test_metrics[test_set] = {
-            metric: float(value / len(overall_test_metrics[test_set]))  # Convert to Python float
-            for metric, value in metrics_sum.items()
-        }
-    
-    # Save average metrics to file
-    metrics_file = Path('logs') / Path(args.project) / "average_test_metrics.json"
-    with open(metrics_file, 'w') as f:
-        json.dump(avg_test_metrics, f, indent=4)
-    
-    logger.info(f"Average test metrics saved to {metrics_file}")
-    
-    # Log average metrics
-    logger.info("\nAverage Test Metrics:")
-    for test_set, metrics in avg_test_metrics.items():
-        logger.info(f"\n{test_set} Test Set:")
-        for metric, value in metrics.items():
-            logger.info(f"{metric}: {value:.4f}")
+        print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}, Val Acc = {val_acc:.4f}")
+        print(f"Learning Rate = {optimizer.param_groups[0]['lr']:.6f}")
 
+        val_acc_list.append(val_acc)
+        train_acc_list.append(train_acc)
+
+        # Track best validation performance and save model
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch = epoch
+            best_model_state = model.state_dict().copy()
+            print(f"New best validation performance: {best_val_acc:.4f} at epoch {best_epoch}")
+
+        print("")
+        
+        # Update learning rate
+        # scheduler.step(val_acc)
+
+        # Early stopping
+        # if patience_counter >= patience:
+        #     print(f"Early stopping at epoch {epoch}")
+        #     break
+
+    # Load best model for final test evaluation
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+        print(f"Loaded best model from epoch {best_epoch}")
+    
+    # Evaluate test performance only at the end
+    print("====Final Test Evaluation")
+    test_acc = eval(args, model, device, test_loader)
+    test_acc_list.append(test_acc)
+    
+    print(f"Best validation performance: {best_val_acc:.4f} at epoch {best_epoch}")
+    print(f"Test performance: {test_acc:.4f}")
+
+    with open('result.log', 'a+') as f:
+        f.write(args.dataset + ' ' + str(args.runseed) + ' ' + str(test_acc))
+        f.write('\n')
 
 if __name__ == "__main__":
-    args = set_config()
-    Train_CV(args)
+    main()

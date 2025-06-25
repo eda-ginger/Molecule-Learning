@@ -496,3 +496,4 @@ logs/
 wandb/
 dataset/
 .vscode/
+*.txt
