@@ -43,78 +43,96 @@ class TargetNet(torch.nn.Module):
     
 
 class FPNet(torch.nn.Module):
-    def __init__(self, dim, out=64):
+    def __init__(self, dim, out=64, use_regularization=True):
         super(FPNet, self).__init__()
         self.layer1 = torch.nn.Linear(dim, 256)
         self.layer2 = torch.nn.Linear(256, out)
-        self.bn1 = nn.BatchNorm1d(256)
-        self.bn2 = nn.BatchNorm1d(out)
-        self.dropout = nn.Dropout(0.1)
+        
+        # Optional batch norm and dropout
+        self.use_regularization = use_regularization
+        if use_regularization:
+            self.bn1 = nn.BatchNorm1d(256)
+            self.bn2 = nn.BatchNorm1d(out)
+            self.dropout = nn.Dropout(0.1)
         
     def forward(self, drug):
         feats = drug.x.float()
         feats = self.layer1(feats)
         feats = F.relu(feats)
-        feats = self.bn1(feats)
-        feats = self.dropout(feats)
+        if self.use_regularization:
+            feats = self.bn1(feats)
+            feats = self.dropout(feats)
         
         feats = self.layer2(feats)
         feats = F.relu(feats)
-        feats = self.bn2(feats)
-        feats = self.dropout(feats)
+        if self.use_regularization:
+            feats = self.bn2(feats)
+            feats = self.dropout(feats)
         return feats
 
 
 class CNNNet(torch.nn.Module):
-    def __init__(self, n_filters=32):
+    def __init__(self, n_filters=32, use_regularization=True):
         super(CNNNet, self).__init__()
         self.embedding_xd = nn.Embedding(CHARISOSMILEN + 1, 128) # batch, 100, 128 -> batch, 128, 100
         self.conv_xd_1 = nn.Conv1d(in_channels=128, out_channels=n_filters, kernel_size=4) # batch, 32, 97
         self.conv_xd_2 = nn.Conv1d(in_channels=n_filters, out_channels=n_filters * 2, kernel_size=4) # batch, 64, 94
-        self.bn1 = nn.BatchNorm1d(n_filters)
-        self.bn2 = nn.BatchNorm1d(n_filters * 2)
-        self.dropout = nn.Dropout(0.1)
+        
+        # Optional batch norm and dropout
+        self.use_regularization = use_regularization
+        if use_regularization:
+            self.bn1 = nn.BatchNorm1d(n_filters)
+            self.bn2 = nn.BatchNorm1d(n_filters * 2)
+            self.dropout = nn.Dropout(0.1)
     
-    def conv_module(self, x, conv1, conv2, bn1, bn2):
+    def conv_module(self, x, conv1, conv2):
         x = conv1(x)
         x = F.relu(x)
-        x = bn1(x)
-        x = self.dropout(x)
+        if self.use_regularization:
+            x = self.bn1(x)
+            x = self.dropout(x)
         
         x = conv2(x)
         x = F.relu(x)
-        x = bn2(x)
-        x = self.dropout(x)
+        if self.use_regularization:
+            x = self.bn2(x)
+            x = self.dropout(x)
         
         x = F.max_pool1d(x, x.size(2)).squeeze(2)
         return x
 
     def forward(self, drug):
         embedded_xd = self.embedding_xd(drug.x).permute(0, 2, 1)
-        conv_xd = self.conv_module(embedded_xd, self.conv_xd_1, self.conv_xd_2, self.bn1, self.bn2)
+        conv_xd = self.conv_module(embedded_xd, self.conv_xd_1, self.conv_xd_2)
         return conv_xd
     
 
 class GCNNet(torch.nn.Module):
-    def __init__(self, dim=133):
+    def __init__(self, dim=133, use_regularization=True):
         super(GCNNet, self).__init__()
         self.layer1 = GCNConv(dim, dim)
         self.layer2 = GCNConv(dim, dim)
-        self.bn1 = nn.BatchNorm1d(dim)
-        self.bn2 = nn.BatchNorm1d(dim)
-        self.dropout = nn.Dropout(0.1)
+        
+        # Optional batch norm and dropout
+        self.use_regularization = use_regularization
+        if use_regularization:
+            self.bn1 = nn.BatchNorm1d(dim)
+            self.bn2 = nn.BatchNorm1d(dim)
+            self.dropout = nn.Dropout(0.1)
         
     def forward(self, drug):
         feats, edge_index, batch = drug.x.float(), drug.edge_index, drug.batch
         x = self.layer1(feats, edge_index)
         x = F.relu(x)
-        x = self.bn1(x)
-        x = self.dropout(x)
+        if self.use_regularization:
+            x = self.bn1(x)
+            x = self.dropout(x)
         
         x = self.layer2(x, edge_index)
         x = F.relu(x)
-        x = self.bn2(x)
-        x = self.dropout(x)
+        if self.use_regularization:
+            x = self.bn2(x)
+            x = self.dropout(x)
         
         x = gap(x, batch)
         return x
@@ -157,30 +175,29 @@ class EGNN_Encoder(nn.Module):
     def forward(self, h, x, edges, edge_attr):
         # Pass through EGNN layers to get updated node features and coordinates
         h, x = self.egnn(h, x, edges, edge_attr)
-
         return h
     
     
 
 
 class DTA_test(torch.nn.Module):
-    def __init__(self, feature_type):
+    def __init__(self, feature_type, use_regularization=False):
         super(DTA_test, self).__init__()
         
         if feature_type == 'FP-Morgan':
-            self.drug_net = FPNet(dim=1024)
+            self.drug_net = FPNet(dim=1024, use_regularization=use_regularization)
             drug_out = 64
         elif feature_type == 'FP-MACCS':
-            self.drug_net = FPNet(dim=167)
+            self.drug_net = FPNet(dim=167, use_regularization=use_regularization)
             drug_out = 64
         elif feature_type == '2D-GNN':
-            self.drug_net = GCNNet()
+            self.drug_net = GCNNet(dim=133, use_regularization=use_regularization)
             drug_out = 133
         elif feature_type == '3D-GNN':
             self.drug_net = EGNN_Encoder(n_layers=2)
             drug_out = 64
         elif feature_type == 'CNN':
-            self.drug_net = CNNNet()
+            self.drug_net = CNNNet(use_regularization=use_regularization)
             drug_out = 64
             
         self.drug_mlp = nn.Sequential(
@@ -193,17 +210,16 @@ class DTA_test(torch.nn.Module):
         self.target_net = TargetNet() # 64
         
         self.predictor = nn.Sequential(
-            nn.Linear(256, 512),
-            nn.ReLU(),
-            nn.BatchNorm1d(512),
-            nn.Dropout(0.1),
-            nn.Linear(512, 256),
+            nn.Linear(128, 256),
             nn.ReLU(),
             nn.BatchNorm1d(256),
             nn.Dropout(0.1),
-            nn.Linear(256, 1),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            nn.Dropout(0.1),
+            nn.Linear(128, 1),
         )
-    
     
         
     def forward(self, data):
@@ -217,23 +233,23 @@ class DTA_test(torch.nn.Module):
     
 
 class Property_test(torch.nn.Module):
-    def __init__(self, feature_type, num_tasks):
+    def __init__(self, feature_type, num_tasks, use_regularization=False):
         super(Property_test, self).__init__()
         
         if feature_type == 'FP-Morgan':
-            self.molnet = FPNet(dim=1024)
+            self.molnet = FPNet(dim=1024, use_regularization=use_regularization)
             mol_out = 64
         elif feature_type == 'FP-MACCS':
-            self.molnet = FPNet(dim=167)
+            self.molnet = FPNet(dim=167, use_regularization=use_regularization)
             mol_out = 64
         elif feature_type == '2D-GNN':
-            self.molnet = GCNNet(dim=133)
+            self.molnet = GCNNet(dim=133, use_regularization=use_regularization)
             mol_out = 133
         elif feature_type == '3D-GNN':
             self.molnet = EGNN_Encoder(n_layers=2)
             mol_out = 64
         elif feature_type == 'CNN':
-            self.molnet = CNNNet()
+            self.molnet = CNNNet(use_regularization=use_regularization)
             mol_out = 64
             
         self.mol_mlp = nn.Sequential(
