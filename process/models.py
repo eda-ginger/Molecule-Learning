@@ -177,8 +177,6 @@ class EGNN_Encoder(nn.Module):
         h, x = self.egnn(h, x, edges, edge_attr)
         return h
     
-    
-
 
 class DTA_test(torch.nn.Module):
     def __init__(self, feature_type, use_regularization=False):
