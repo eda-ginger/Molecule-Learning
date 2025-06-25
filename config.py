@@ -19,6 +19,7 @@ def set_config():
     parser.add_argument('--n_workers', type=int, default=0, help='Number of workers for DataLoader (0 for main process)')
     parser.add_argument('--device', type=str, default='cuda', choices=['cuda', 'cpu'], help='Device to use for training (cuda or cpu)')
     parser.add_argument('--gpu', type=int, default=0, help='GPU ID to use for training')
+    parser.add_argument('--model_type', type=str, default='test', choices=['test', 'simple'], help='Model type: test or simple')
 
     # details
     parser.add_argument('--loss', type=str, default='mse_mean', choices=['mse_mean', 'mse_sum'], help='Loss function for training')

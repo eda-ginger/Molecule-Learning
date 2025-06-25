@@ -230,7 +230,55 @@ class DTA_test(torch.nn.Module):
         xc = torch.cat((drug_feats, target_feats), 1)
         xc = self.predictor(xc)
         return xc
+
+
+
+class DTA_simple(torch.nn.Module): # not use batch norm
+    def __init__(self, feature_type, use_regularization=False):
+        super(DTA_simple, self).__init__()
+        
+        if feature_type == 'FP-Morgan':
+            self.drug_net = FPNet(dim=1024, use_regularization=use_regularization)
+            drug_out = 64
+        elif feature_type == 'FP-MACCS':
+            self.drug_net = FPNet(dim=167, use_regularization=use_regularization)
+            drug_out = 64
+        elif feature_type == '2D-GNN':
+            self.drug_net = GCNNet(dim=133, use_regularization=use_regularization)
+            drug_out = 133
+        elif feature_type == '3D-GNN':
+            self.drug_net = EGNN_Encoder(n_layers=2)
+            drug_out = 64
+        elif feature_type == 'CNN':
+            self.drug_net = CNNNet(use_regularization=use_regularization)
+            drug_out = 64
+            
+        self.drug_mlp = nn.Sequential(
+            nn.Linear(drug_out, 64),
+            nn.ReLU(),
+        )
+        
+        self.target_net = TargetNet() # 64
+        
+        self.predictor = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, 1),
+        )
     
+        
+    def forward(self, data):
+        drug, target = data
+        drug_feats = self.drug_net(drug)
+        drug_feats = self.drug_mlp(drug_feats)
+        target_feats = self.target_net(target)
+        xc = torch.cat((drug_feats, target_feats), 1)
+        xc = self.predictor(xc)
+        return xc    
 
 class Property_test(torch.nn.Module):
     def __init__(self, feature_type, num_tasks, use_regularization=False):
@@ -278,6 +326,49 @@ class Property_test(torch.nn.Module):
         pred = self.predictor(mol_feats)
         return pred
     
+
+class Property_simple(torch.nn.Module): # not use batch norm
+    def __init__(self, feature_type, num_tasks, use_regularization=False):
+        super(Property_simple, self).__init__()
+        
+        if feature_type == 'FP-Morgan':
+            self.molnet = FPNet(dim=1024, use_regularization=use_regularization)
+            mol_out = 64
+        elif feature_type == 'FP-MACCS':
+            self.molnet = FPNet(dim=167, use_regularization=use_regularization)
+            mol_out = 64
+        elif feature_type == '2D-GNN':
+            self.molnet = GCNNet(dim=133, use_regularization=use_regularization)
+            mol_out = 133
+        elif feature_type == '3D-GNN':
+            self.molnet = EGNN_Encoder(n_layers=2)
+            mol_out = 64
+        elif feature_type == 'CNN':
+            self.molnet = CNNNet(use_regularization=use_regularization)
+            mol_out = 64
+            
+        self.mol_mlp = nn.Sequential(
+            nn.Linear(mol_out, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        
+        self.predictor = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, num_tasks),
+        )
+    
+        
+    def forward(self, data):
+        mol_feats = self.molnet(data)
+        mol_feats = self.mol_mlp(mol_feats)
+        pred = self.predictor(mol_feats)
+        return pred
 
 
 if __name__ == "__main__":

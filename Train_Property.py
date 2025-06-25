@@ -156,6 +156,7 @@ def main():
     parser.add_argument('--use_wandb', default=True, help='use wandb for logging')
     parser.add_argument('--project', type=str, default='property_prediction', help='wandb project name')
     parser.add_argument('--use_regularization', action='store_true', default=False, help='use batch normalization and dropout')
+    parser.add_argument('--model_type', type=str, default='test', help='model type: simple or test')
     args = parser.parse_args()
 
     # 3-fold cross validation
@@ -305,9 +306,12 @@ def main():
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
 
         #set up model
-        from process.models import Property_test
+        from process.models import Property_test, Property_simple
         print('num_tasks', num_tasks)
-        model = Property_test(feature_type='2D-GNN', num_tasks=num_tasks, use_regularization=args.use_regularization)
+        if args.model_type == 'test':
+            model = Property_test(feature_type='2D-GNN', num_tasks=num_tasks, use_regularization=args.use_regularization)
+        elif args.model_type == 'simple':
+            model = Property_simple(feature_type='2D-GNN', num_tasks=num_tasks, use_regularization=args.use_regularization)
         print(model)
         
         # Check model parameters
