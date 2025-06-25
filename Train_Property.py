@@ -292,13 +292,6 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.decay)
     print(optimizer)
 
-    # Add learning rate scheduler
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=10, verbose=True)
-    
-    # Early stopping
-    # patience = 20
-    # patience_counter = 0
-
     train_acc_list = []
     val_acc_list = []
     test_acc_list = []
@@ -339,14 +332,6 @@ def main():
             print(f"New best validation performance: {best_val_acc:.4f} at epoch {best_epoch}")
 
         print("")
-        
-        # Update learning rate
-        # scheduler.step(val_acc)
-
-        # Early stopping
-        # if patience_counter >= patience:
-        #     print(f"Early stopping at epoch {epoch}")
-        #     break
 
     # Load best model for final test evaluation
     if best_model_state is not None:
