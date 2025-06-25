@@ -272,15 +272,25 @@ def Train_CV(args):
     
     # Calculate average metrics across all folds
     avg_test_metrics = {}
+    std_test_metrics = {}
     for test_set in ['TST']:
         metrics_sum = {metric: 0.0 for metric in overall_test_metrics[test_set][0].keys()}
+        metrics_values = {metric: [] for metric in overall_test_metrics[test_set][0].keys()}
+        
         for fold_metrics in overall_test_metrics[test_set]:
             for metric, value in fold_metrics.items():
                 metrics_sum[metric] += value
+                metrics_values[metric].append(value)
         
         avg_test_metrics[test_set] = {
             metric: float(value / len(overall_test_metrics[test_set]))  # Convert to Python float
             for metric, value in metrics_sum.items()
+        }
+        
+        # Calculate standard deviation for each metric
+        std_test_metrics[test_set] = {
+            metric: float(np.std(values))  # Convert to Python float
+            for metric, values in metrics_values.items()
         }
     
     # Save average metrics to file
@@ -290,13 +300,13 @@ def Train_CV(args):
     
     logger.info(f"Average test metrics saved to {metrics_file}")
     
-    # Log average metrics
+    # Log average metrics with standard deviation
     logger.info("\nAverage Test Metrics:")
     for test_set, metrics in avg_test_metrics.items():
         logger.info(f"\n{test_set} Test Set:")
-        for metric, value in metrics.items():
-            logger.info(f"{metric}: {value:.4f}")
-
+        for metric, avg_value in metrics.items():
+            std_value = std_test_metrics[test_set][metric]
+            logger.info(f"{metric}: {avg_value:.3f} (±{std_value:.2f})")
 
 if __name__ == "__main__":
     args = set_config()

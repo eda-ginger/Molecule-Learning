@@ -153,7 +153,7 @@ def main():
     parser.add_argument('--split', type = str, default="random", help = "random or scaffold or random_scaffold")
     parser.add_argument('--eval_train', type=int, default = 0, help='evaluating training or not')
     parser.add_argument('--num_workers', type=int, default = 8, help='number of workers for dataset loading')
-    parser.add_argument('--use_wandb', action='store_true', help='use wandb for logging')
+    parser.add_argument('--use_wandb', default=True, help='use wandb for logging')
     parser.add_argument('--project', type=str, default='property_prediction', help='wandb project name')
     parser.add_argument('--use_regularization', action='store_true', default=False, help='use batch normalization and dropout')
     args = parser.parse_args()
@@ -377,7 +377,6 @@ def main():
                 wandb.log({
                     "train_loss": train_loss,
                     "val_loss": val_loss,
-                    "epoch": epoch
                 })
 
         # Load best model for final test evaluation
@@ -407,11 +406,11 @@ def main():
     avg_test_acc = np.mean(all_test_results)
     std_test_acc = np.std(all_test_results)
     print(f"\n=== Final Results ===")
-    print(f"Average Test Accuracy: {avg_test_acc:.4f} ± {std_test_acc:.4f}")
+    print(f"Average Test Accuracy: {avg_test_acc:.3f} (±{std_test_acc:.2f})")
     print(f"Individual Results: {[f'{acc:.4f}' for acc in all_test_results]}")
 
     with open('result.log', 'a+') as f:
-        f.write(f"{args.dataset} average {avg_test_acc:.4f} ± {std_test_acc:.4f}\n")
+        f.write(f"{args.dataset} average AUC: {avg_test_acc:.3f}, SD: {std_test_acc:.2f}\n")
 
 if __name__ == "__main__":
     main()
