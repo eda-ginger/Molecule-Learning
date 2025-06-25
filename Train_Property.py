@@ -24,17 +24,7 @@ from utils.splitters import scaffold_split, random_split, random_scaffold_split
 from sklearn.metrics import roc_auc_score
 
 import wandb
-import json
-import logging
-from pathlib import Path
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='"%(asctime)s [%(levelname)s] %(message)s"',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
 
 criterion = nn.BCEWithLogitsLoss(reduction = "none")
 
@@ -162,10 +152,10 @@ def main():
     parser.add_argument('--runseed', type=int, default=0, help = "Seed for minibatch selection, random initialization.")
     parser.add_argument('--split', type = str, default="random", help = "random or scaffold or random_scaffold")
     parser.add_argument('--eval_train', type=int, default = 0, help='evaluating training or not')
-    parser.add_argument('--num_workers', type=int, default = 4, help='number of workers for dataset loading')
+    parser.add_argument('--num_workers', type=int, default = 8, help='number of workers for dataset loading')
     parser.add_argument('--use_wandb', action='store_true', help='use wandb for logging')
     parser.add_argument('--project', type=str, default='property_prediction', help='wandb project name')
-    parser.add_argument('--use_regularization', action='store_true', default=True, help='use batch normalization and dropout')
+    parser.add_argument('--use_regularization', action='store_true', default=False, help='use batch normalization and dropout')
     args = parser.parse_args()
 
     # 3-fold cross validation
