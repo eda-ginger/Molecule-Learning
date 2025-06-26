@@ -323,6 +323,8 @@ class Property_test(torch.nn.Module):
         mol_feats = self.mol_mlp(mol_feats)
         pred = self.predictor(mol_feats)
         return pred
+
+
     
 
 class Property_simple(torch.nn.Module): # not use batch norm
@@ -360,7 +362,6 @@ class Property_simple(torch.nn.Module): # not use batch norm
             nn.Dropout(0.1),
             nn.Linear(256, num_tasks),
         )
-    
         
     def forward(self, data):
         mol_feats = self.molnet(data)
@@ -394,3 +395,4 @@ if __name__ == "__main__":
     print(ligand_features.shape, ligand_coords.shape, ligand_edges.shape, ligand_edge_attr.shape)
     
     egnn(ligand_features, ligand_coords, ligand_edges, ligand_edge_attr)
+    

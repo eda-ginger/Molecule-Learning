@@ -10,6 +10,7 @@ from torch_geometric.data import InMemoryDataset, download_url, extract_gz
 # from torch_geometric.utils import from_smiles
 
 from rdkit import Chem, RDLogger
+from rdkit.Chem import MACCSkeys, AllChem
 from torch_geometric.data import Data
 
 import warnings; warnings.filterwarnings('ignore') ## 경고 무시
@@ -203,12 +204,14 @@ class CustomMoleculeNet(InMemoryDataset):
         self,
         root: str,
         name: str,
+        feature: str,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
         pre_filter: Optional[Callable] = None,
-        force_reload: bool = False,
+        force_reload: bool = False
     ) -> None:
         self.name = name.lower()
+        self.feature = feature
         assert self.name in self.names.keys()
         super().__init__(root, transform, pre_transform, pre_filter, force_reload)
         self.load(self.processed_paths[0])
@@ -227,7 +230,7 @@ class CustomMoleculeNet(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> str:
-        return 'data.pt'
+        return f'data_{self.feature}.pt'
 
     def download(self) -> None:
         url = self.url.format(self.names[self.name][1])
@@ -253,13 +256,31 @@ class CustomMoleculeNet(InMemoryDataset):
 
             ys = [float(y) if len(y) > 0 else float('NaN') for y in labels]
             y = torch.tensor(ys, dtype=torch.float).view(1, -1)
-
-            data = smiles_to_feature(smiles) ##
             
-            ## 유효하지 않은 feature 제거
-            if data.x.shape[0] < 3: 
-                print("{} is removed".format(data.smiles))
-                continue 
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                print("{} is removed".format(smiles))
+                continue
+            else:
+                if mol.GetNumAtoms() < 3:
+                    print("{} is removed".format(smiles))
+                    continue
+
+            if self.feature == '2D-GNN':
+                data = smiles_to_feature(smiles)
+            elif self.feature == 'FP-Morgan':
+                fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=1024)
+                data = Data(x=torch.tensor(fp).view(1, -1), smiles=smiles)
+            elif self.feature == 'FP-MACCS':
+                fp = MACCSkeys.GenMACCSKeys(mol)
+                data = Data(x=torch.tensor(fp).view(1, -1), smiles=smiles)
+            elif self.feature == 'CNN':
+                data = integer_label_encoding(smiles, 'drug')
+            
+            # ## 유효하지 않은 feature 제거
+            # if data.x.shape[0] < 3: 
+            #     print("{} is removed".format(data.smiles))
+            #     continue 
             
             # data.y = y
             data.y = torch.nan_to_num(y, 0) ## Nan 값은 0으로 바꿔서 y값 지정
@@ -286,3 +307,53 @@ class CustomMoleculeNet(InMemoryDataset):
 
     def __repr__(self) -> str:
         return f'{self.names[self.name][0]}({len(self)})'
+    
+
+CHARSMISET = {"(": 1, ".": 2, "0": 3, "2": 4, "4": 5, "6": 6, "8": 7, "@": 8,
+                "B": 9, "D": 10, "F": 11, "H": 12, "L": 13, "N": 14, "P": 15, "R": 16,
+                "T": 17, "V": 18, "Z": 19, "\\": 20, "b": 21, "d": 22, "f": 23, "h": 24,
+                "l": 25, "n": 26, "r": 27, "t": 28, "#": 29, "%": 30, ")": 31, "+": 32,
+                "-": 33, "/": 34, "1": 35, "3": 36, "5": 37, "7": 38, "9": 39, "=": 40,
+                "A": 41, "C": 42, "E": 43, "G": 44, "I": 45, "K": 46, "M": 47, "O": 48,
+                "S": 49, "U": 50, "W": 51, "Y": 52, "[": 53, "]": 54, "a": 55, "c": 56,
+                "e": 57, "g": 58, "i": 59, "m": 60, "o": 61, "s": 62, "u": 63, "y": 64, '~': 65} # add ~: 65 
+
+CHARISOSMILEN = 65
+
+CHARPROTSET = {"A": 1, "C": 2, "B": 3, "E": 4, "D": 5, "G": 6,
+               "F": 7, "I": 8, "H": 9, "K": 10, "M": 11, "L": 12,
+               "O": 13, "N": 14, "Q": 15, "P": 16, "S": 17, "R": 18,
+               "U": 19, "T": 20, "W": 21, "V": 22, "Y": 23, "X": 24, "Z": 25}
+
+CHARPROTLEN = 25
+
+
+########################################################################################################################
+########## Function
+########################################################################################################################
+
+import numpy as np
+def integer_label_encoding(sequence, tp, max_length=100):
+    """
+    Integer encoding for string sequence.
+    Args:
+        sequence (str): Drug or Protein string sequence.
+        max_length: Maximum encoding length of input string.
+    """
+    if tp == 'drug':
+        charset = CHARSMISET
+    elif tp == 'protein':
+        charset = CHARPROTSET
+
+    encoding = np.zeros(max_length)
+    for idx, letter in enumerate(sequence[:max_length]):
+        try:
+            if tp == 'protein':
+                letter = letter.upper()
+            letter = str(letter)
+            encoding[idx] = charset[letter]
+        except KeyError:
+            print(
+                f"character {letter} does not exists in sequence category encoding, skip and treat as padding."
+            )
+    return Data(x=torch.from_numpy(encoding).to(torch.long).unsqueeze(dim=0))

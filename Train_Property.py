@@ -154,9 +154,10 @@ def main():
     parser.add_argument('--eval_train', type=int, default = 0, help='evaluating training or not')
     parser.add_argument('--num_workers', type=int, default = 0, help='number of workers for dataset loading')
     parser.add_argument('--use_wandb', default=True, help='use wandb for logging')
-    parser.add_argument('--project', type=str, default='property_prediction', help='wandb project name')
+    # parser.add_argument('--project', type=str, default='property_prediction', help='wandb project name')
     parser.add_argument('--use_regularization', action='store_true', default=False, help='use batch normalization and dropout')
     parser.add_argument('--model_type', type=str, default='test', help='model type: simple or test')
+    parser.add_argument('--feature', type=str, default='2D-GNN', help='feature type: 2D-GNN, FP-Morgan, FP-MACCS, CNN')
     args = parser.parse_args()
 
     # 3-fold cross validation
@@ -169,7 +170,7 @@ def main():
         # Initialize wandb for this fold
         if args.use_wandb:
             wandb.init(
-                project=args.project,
+                project=f"{args.dataset.upper()}_{args.feature}_{args.model_type}",
                 name=f"Fold_{fold_idx+1}",
                 config=vars(args)
             )
@@ -211,19 +212,7 @@ def main():
         #set up dataset
         # from utils.loader import CustomMoleculeNet, MoleculeDataset
         from utils.molecule_feature import CustomMoleculeNet
-        dataset = CustomMoleculeNet('dataset/', name=args.dataset.upper())
-        
-        # dataset = CustomMoleculeNet('dataset/', name='bace'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='bbbp'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='hiv'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='tox21'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='toxcast'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='sider'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='clintox'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='freesolv'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='esol'.upper())
-        # dataset = CustomMoleculeNet('dataset/', name='lipo'.upper())
-        
+        dataset = CustomMoleculeNet('dataset/', feature=args.feature, name=args.dataset.upper())
         
         # smiles_list = pd.read_csv('dataset/' + 'bace' + '/processed/smiles.csv', header=None)[0].tolist()
         # train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
@@ -309,9 +298,9 @@ def main():
         from process.models import Property_test, Property_simple
         print('num_tasks', num_tasks)
         if args.model_type == 'test':
-            model = Property_test(feature_type='2D-GNN', num_tasks=num_tasks, use_regularization=args.use_regularization)
+            model = Property_test(feature_type=args.feature, num_tasks=num_tasks, use_regularization=args.use_regularization)
         elif args.model_type == 'simple':
-            model = Property_simple(feature_type='2D-GNN', num_tasks=num_tasks, use_regularization=args.use_regularization)
+            model = Property_simple(feature_type=args.feature, num_tasks=num_tasks, use_regularization=args.use_regularization)
         print(model)
         
         # Check model parameters
@@ -418,3 +407,46 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    # # bace        
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='bace'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='bace'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='bace'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='bace'.upper())
+    
+    # # bbpb
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='bbbp'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='bbbp'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='bbbp'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='bbbp'.upper())
+    
+    # # hiv
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='hiv'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='hiv'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='hiv'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='hiv'.upper())
+    
+    # # tox21
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='tox21'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='tox21'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='tox21'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='tox21'.upper())
+    
+    # # toxcast
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='toxcast'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='toxcast'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='toxcast'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='toxcast'.upper())
+    
+    # # sider
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='sider'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='sider'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='sider'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='sider'.upper())
+    
+    # # clintox
+    # dataset = CustomMoleculeNet('dataset/', feature='2D-GNN', name='clintox'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-Morgan', name='clintox'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='FP-MACCS', name='clintox'.upper())
+    # dataset = CustomMoleculeNet('dataset/', feature='CNN', name='clintox'.upper())
+    

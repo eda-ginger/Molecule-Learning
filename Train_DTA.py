@@ -136,20 +136,10 @@ def Train_CV(args):
     tst_dataset = CustomDataset(tst_samples)
     logger.info(f"TST: {len(tst_dataset)}")
     
-    # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
-    #                     collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers)
-    
-    # for batch_idx, inputs in enumerate(val_loader):
-    #     ligands, sequences = inputs
-    #     print(ligands.x.shape)
-    #     print(sequences.x.shape)
-    #     print(ligands.y.shape)
-    #     break
-    
-    # raise Exception('stop')
-    
     # main loop
     seeds = [16875, 33928, 40000]
+    all_test_metrics = []
+    
     for s_idx, seed in enumerate(seeds):
         fold_idx = s_idx + 1
 
@@ -159,9 +149,6 @@ def Train_CV(args):
         g = torch.Generator()
         g.manual_seed(seed)
     
-        # Test datasets (TST)
-        overall_test_metrics = {'TST': []}
-
         logger.info(f"\n--- Starting Fold {s_idx+1}/{len(seeds)} ---")
 
         # Initialize wandb for each fold
@@ -246,7 +233,7 @@ def Train_CV(args):
         test_loader = DataLoader(tst_dataset, batch_size=300, shuffle=False, 
                                 collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers)
         _, test_metrics = evaluate(model_test, test_loader, loss_fn, device)
-        overall_test_metrics['TST'].append(test_metrics)
+        all_test_metrics.append(test_metrics)
             
         # save fold's test metrics
         fold_metrics_file = fold_output_dir / f"TST_metrics.json"
@@ -270,28 +257,15 @@ def Train_CV(args):
 
     logger.info("Training and evaluation finished.")
     
-    # Calculate average metrics across all folds
+    # Calculate average and standard deviation of test metrics across all folds
+    metrics_names = list(all_test_metrics[0].keys())
     avg_test_metrics = {}
     std_test_metrics = {}
-    for test_set in ['TST']:
-        metrics_sum = {metric: 0.0 for metric in overall_test_metrics[test_set][0].keys()}
-        metrics_values = {metric: [] for metric in overall_test_metrics[test_set][0].keys()}
-        
-        for fold_metrics in overall_test_metrics[test_set]:
-            for metric, value in fold_metrics.items():
-                metrics_sum[metric] += value
-                metrics_values[metric].append(value)
-        
-        avg_test_metrics[test_set] = {
-            metric: float(value / len(overall_test_metrics[test_set]))  # Convert to Python float
-            for metric, value in metrics_sum.items()
-        }
-        
-        # Calculate standard deviation for each metric
-        std_test_metrics[test_set] = {
-            metric: float(np.std(values))  # Convert to Python float
-            for metric, values in metrics_values.items()
-        }
+    
+    for metric in metrics_names:
+        values = [fold_metrics[metric] for fold_metrics in all_test_metrics]
+        avg_test_metrics[metric] = float(np.mean(values))
+        std_test_metrics[metric] = float(np.std(values))
     
     # Save average metrics to file
     metrics_file = Path('logs') / Path(args.project) / "average_test_metrics.json"
@@ -300,21 +274,32 @@ def Train_CV(args):
     
     logger.info(f"Average test metrics saved to {metrics_file}")
     
-    # Log average metrics with standard deviation
+    # Log and save results
     logger.info("\nAverage Test Metrics:")
-    for test_set, metrics in avg_test_metrics.items():
-        logger.info(f"\n{test_set} Test Set:")
-        for metric, avg_value in metrics.items():
-            std_value = std_test_metrics[test_set][metric]
-            logger.info(f"{metric}: {avg_value:.3f} (±{std_value:.2f})")
-    
-    # Save to result.log file
     result_file = Path('logs') / Path(args.project) / "result.log"
     with open(result_file, 'a+') as f:
-        for test_set, metrics in avg_test_metrics.items():
-            for metric, avg_value in metrics.items():
-                std_value = std_test_metrics[test_set][metric]
-                f.write(f"{test_set} {metric}: {avg_value:.3f} (±{std_value:.2f})\n")
+        # Write project information
+        f.write(f"\n{'='*50}\n")
+        f.write(f"Project: {args.project}\n")
+        f.write(f"Feature: {args.feature}\n")
+        f.write(f"Parameters: {count_parameters(model):,}\n")
+        f.write(f"Batch Size: {args.batch_size}\n")
+        f.write(f"Epochs: {args.n_epochs}\n")
+        f.write(f"Cross-validation Folds: {len(seeds)}\n")
+        f.write(f"{'='*50}\n\n")
+        
+        # Write model architecture
+        f.write("Model Architecture:\n")
+        f.write(str(model))
+        f.write(f"\n\n{'='*50}\n")
+        f.write("Test Results:\n")
+        
+        for metric in metrics_names:
+            avg_value = avg_test_metrics[metric]
+            std_value = std_test_metrics[metric]
+            result_line = f"Test {metric}: {avg_value:.3f} (±{std_value:.2f})"
+            logger.info(result_line)
+            f.write(result_line + "\n")
 
 if __name__ == "__main__":
     args = set_config()
