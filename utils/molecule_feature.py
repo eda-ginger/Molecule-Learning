@@ -101,7 +101,8 @@ def atom_features(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]]:
     return features           
     
 
-def smiles_to_feature(smiles: str, with_hydrogen: bool = False,
+def smiles_to_feature(smiles: str, dim3d: str = False, 
+                      with_hydrogen: bool = False,
                       kekulize: bool = False) -> 'torch_geometric.data.Data':
     r"""Converts a SMILES string to a :class:`torch_geometric.data.Data`
     instance.
@@ -121,6 +122,15 @@ def smiles_to_feature(smiles: str, with_hydrogen: bool = False,
         mol = Chem.AddHs(mol)
     if kekulize:
         Chem.Kekulize(mol)
+    
+    if dim3d:
+        mol = Chem.AddHs(mol)
+        mol = Chem.EmbedMolecule(mol)
+        if mol == -1:
+            rdDepictor.Compute2DCoords(mol)
+        conf = mol.GetConformer()
+        pos = np.array([conf.GetAtomPosition(idx) for idx, symbol in atom_info])
+        graph_data.pos = pos
 
     xs: List[List[int]] = []
     tmp = 0
@@ -267,6 +277,8 @@ class CustomMoleculeNet(InMemoryDataset):
                     continue
 
             if self.feature == '2D-GNN':
+                data = smiles_to_feature(smiles)
+            elif self.feature == '3D-GNN':
                 data = smiles_to_feature(smiles)
             elif self.feature == 'FP-Morgan':
                 fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=1024)

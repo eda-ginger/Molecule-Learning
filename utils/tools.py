@@ -158,11 +158,11 @@ def init_wandb(args, fold_idx=None):
     )
     return run
 
-from process.models import *
+from model.experiment_model import *
 
 def get_model(args):
-    if args.model_type == 'test':
-        model = DTA_test(args.feature)
+    if args.model_type == 'norm':
+        model = DTA_norm(args.feature)
     elif args.model_type == 'simple':
         model = DTA_simple(args.feature)
     return model

@@ -491,9 +491,10 @@ dmypy.json
 .pyre/
 
 # data
-data/
 logs/
 wandb/
 dataset/
 .vscode/
 *.txt
+dta_dataset/
+experiments/
