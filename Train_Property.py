@@ -23,6 +23,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error ## for regre
 
 from datetime import datetime ##
 
+import wandb
+
 criterion = nn.BCEWithLogitsLoss(reduction = "none")
 
 def train(args, model, device, loader, optimizer):
@@ -80,10 +82,12 @@ def train_reg(args, model, device, loader, optimizer):
     
     return avg_train_loss ## addition: return avg_train_loss
 
-def eval(args, model, device, loader):
+def eval(args, model, device, loader, test=False):
     model.eval()
     y_true = []
     y_scores = []
+    total_loss = 0.0
+    total_batches = 0
 
     for step, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
@@ -93,6 +97,16 @@ def eval(args, model, device, loader):
 
         y_true.append(batch.y.view(pred.shape))
         y_scores.append(pred)
+        
+        # Calculate loss only if not test
+        if not test:
+            y = batch.y.view(pred.shape).to(torch.float64)
+            is_valid = y**2 > 0
+            loss_mat = criterion(pred.double(), (y+1)/2)
+            loss_mat = torch.where(is_valid, loss_mat, torch.zeros(loss_mat.shape).to(loss_mat.device).to(loss_mat.dtype))
+            loss = torch.sum(loss_mat)/torch.sum(is_valid)
+            total_loss += loss.item()
+            total_batches += 1
 
     y_true = torch.cat(y_true, dim = 0).cpu().numpy()
     y_scores = torch.cat(y_scores, dim = 0).cpu().numpy()
@@ -108,7 +122,12 @@ def eval(args, model, device, loader):
         print("Some target is missing!")
         print("Missing ratio: %f" %(1 - float(len(roc_list))/y_true.shape[1]))
 
-    return sum(roc_list)/len(roc_list) #y_true.shape[1]
+    avg_auc = sum(roc_list)/len(roc_list) #y_true.shape[1]
+    if test:
+        return avg_auc
+    else:
+        avg_loss = total_loss / total_batches
+        return avg_auc, avg_loss
 
 def eval_reg(args, model, device, loader):
     # code from HiMol's finetune.py
@@ -172,16 +191,28 @@ def define_parser(parser: argparse.ArgumentParser):
     parser.add_argument('--ft_type', type=str, default='full', help='Type of fine-tune (full, freeze, no_pretrain)')
     
     ## addition
-    parser.add_argument('--run_cv', type=int, default=1, help='Number of iterations')
+    # parser.add_argument('--run_cv', type=int, default=1, help='Number of iterations')
     parser.add_argument('--seed_list_in', type=str, default='', help="seed list")
     # parser.add_argument('--seed_list', type=list, default=[], help="seed list")
     
     ## PGJ
-    parser.add_argument('--seed_list', type=list, default=[42, 43, 44], help="seed list")
+    parser.add_argument('--run_cv', type=int, default=5, help='Number of iterations')
+    parser.add_argument('--seed_list', type=list, default=[42, 43, 44, 45, 46], help="seed list")
     parser.add_argument('--feature', type=str, default='2D-GNN', help='feature type')
+    parser.add_argument('--use_wandb', default=True, help='use wandb for logging')
+    parser.add_argument('--project', type=str, default='', help='wandb project name')
 
 def exec_main(args):
     device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+
+
+    # Initialize wandb for this fold
+    if args.use_wandb:
+        wandb.init(
+            project=args.project,
+            name=f"Fold_{args.seed_list.index(args.runseed)}",
+            config=vars(args)
+        )
     
     ## seed
     if args.runseed != -1: ## random seed if runseed is -1, or the specified seed if it is a positive number above 0.
@@ -229,7 +260,14 @@ def exec_main(args):
     print('### Setup Dataset ###')
     data_root = "dataset/"
     from data.loader import MoleculeDataset ##
-    dataset = MoleculeDataset(data_root + args.dataset, dataset=args.dataset)
+    dataset = MoleculeDataset(data_root + args.dataset, dataset=args.dataset, feature=args.feature)
+    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'bbbp', dataset='bbbp', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'tox21', dataset='tox21', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'toxcast', dataset='toxcast', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'sider', dataset='sider', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'clintox', dataset='clintox', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'hiv', dataset='hiv', feature='2D-GNN')
 
     print('[dataset]') ##
     print(dataset)
@@ -317,8 +355,15 @@ def exec_main(args):
                 print("omit the training accuracy computation")
                 train_acc = 0
                 
-            val_acc = eval(args, model, device, val_loader)
-            test_acc = eval(args, model, device, test_loader)
+            val_acc, val_loss = eval(args, model, device, val_loader)
+            test_acc = eval(args, model, device, test_loader, test=True)
+
+            # Log to wandb
+            if args.use_wandb:
+                wandb.log({
+                    "train_loss": train_loss,
+                    "val_loss": val_loss
+                })
 
             print("train AUC: %f val AUC: %f test AUC: %f" % (train_acc, val_acc, test_acc)) ## modify: style
             
@@ -369,14 +414,24 @@ def exec_main(args):
             test_mse_list.append(test_mse); test_mae_list.append(test_mae); test_rmse_list.append(test_rmse)
 
             print()
-        
+
     if task_type == 'cls':
         best_test_auc.append('cls')
+        if args.use_wandb:
+            wandb.log({"best_epoch": best_test_auc[3],
+                    "test_metric": best_test_auc[2]})
+            wandb.finish()
+
         return best_test_auc
     
     elif task_type == 'reg':
         best_test_mse.append('reg')
+        if args.use_wandb:
+            wandb.log({"best_epoch": best_test_mse[3],
+                    "test_metric": best_test_mse[2]})
+            wandb.finish()
         return best_test_mse
+    
 
 def modify_seed_list(args):
     # str -> int
@@ -401,18 +456,17 @@ def main():
         ## now datetime
         now_date = datetime.now()
         now_md = now_date.strftime('%m%d')
-        fine_name = args.dataset + '_' + args.filename
+        fine_name = args.dataset + '_' + args.filename + '_result.csv'
         # fname = os.path.join('finetune', args.ft_type, fine_name)
-        fname = os.path.join('experiments', fine_name)
+        fname = os.path.join('experiments', args.feature, fine_name)
 
         #delete the directory if there exists one
         if os.path.exists(fname):
-            shutil.rmtree(fname)
+            os.remove(fname)
             print("removed the existing file.")
         
         from pathlib import Path
-        Path(fname.parent).mkdir(parents=True, exist_ok=True)
-        print(f'{fname.parent} created')
+        Path(fname).parent.mkdir(parents=True, exist_ok=True)
     
     train_results, val_results, test_results = np.array([]), np.array([]), np.array([])
     
@@ -430,7 +484,8 @@ def main():
             print(f'================== {i+1} exec - RANDOM seed ==================')
         else:
             print(f'================== {i+1} exec - data seed: {args.seed}, run seed: {args.runseed} ==================')
-        
+
+
         train_result, val_result, test_result, epoch, task_type = exec_main(args)
         print("[BEST - Epoch: %d] train: %.6f val: %.6f test: %.6f" % (epoch, train_result, val_result, test_result))
 
@@ -447,10 +502,10 @@ def main():
                                       'valid':[val_result],
                                       'test':[test_result]})
                         
-            if not os.path.exists(fname+'_result.csv'):
-                result_df.to_csv(fname+'_result.csv', mode='w', index=False)
+            if not os.path.exists(fname):
+                result_df.to_csv(fname, mode='w', index=False)
             else:
-                result_df.to_csv(fname+'_result.csv', mode='a', index=False, header=False)
+                result_df.to_csv(fname, mode='a', index=False, header=False)
         
         train_results = np.append(train_results, train_result)
         val_results = np.append(val_results, val_result)
@@ -469,7 +524,9 @@ def main():
     print('[std]')
     print("train: %.2f val: %.2f test: %.2f" % (train_results.std(), val_results.std(), test_results.std()))
     
-
+    print(f'================== Summary ==================')
+    print(f"Valid Score: {val_results.mean():.1f} (±{val_results.std():.2f})")
+    print(f"Test Score: {test_results.mean():.1f} (±{test_results.std():.2f})")
 
 if __name__ == "__main__":
     main()

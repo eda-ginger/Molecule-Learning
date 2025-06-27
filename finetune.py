@@ -459,8 +459,6 @@ def main():
         print("train: %.6f val: %.6f test: %.6f" % (train_results.mean(), val_results.mean(), test_results.mean()))
     print('[std]')
     print("train: %.2f val: %.2f test: %.2f" % (train_results.std(), val_results.std(), test_results.std()))
-    
-
 
 if __name__ == "__main__":
     main()
