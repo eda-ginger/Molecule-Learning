@@ -6,7 +6,7 @@ def set_config():
     
     # Data arguments from prepare.py (assuming these are still needed for context)
     parser.add_argument('--feature', type=str, default='FP-Morgan', choices=['CNN','2D-GNN', '3D-GNN', 'FP-Morgan', 'FP-MACCS'], help='Feature type')
-    parser.add_argument('--cache_dir', type=str, default='./data/', help='Directory for cached data and splits')
+    parser.add_argument('--cache_dir', type=str, default='./dta_dataset/', help='Directory for cached data and splits')
     parser.add_argument('--data_name', type=str, default='davis', help='Dataset name')
 
     # Training process arguments

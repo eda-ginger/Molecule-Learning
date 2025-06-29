@@ -78,20 +78,6 @@ class CNNNet(torch.nn.Module):
         return conv_xd
     
 
-from torch_geometric.nn import SchNet
-
-
-# class Net3D(torch.nn.Module):
-#     def __init__(self, dim=133):
-#         super(3DNet, self).__init__():
-#         self.layer = SchNet(num_interactions=3)
-        
-#     def forward(self, data):
-#         z, pos, batch = data.z, data.pos, data.batch
-#         x = self.layer(z, pos, batch)
-#         return x
-
-
 class GCNNet(torch.nn.Module):
     def __init__(self, dim=133):
         super(GCNNet, self).__init__()
@@ -106,17 +92,6 @@ class GCNNet(torch.nn.Module):
         x = F.relu(x)
         x = gap(x, batch)
         return x
-
-
-from process.graph_cl_models import *
-class GraphEncoder(torch.nn.Module):
-    def __init__(self, dim=133):
-        super(GraphEncoder, self).__init__()
-        self.layer1 = GCNConv(dim, dim)
-        self.layer2 = GCNConv(dim, dim)
-        
-        
-
 
 
 from process.egnn import EGNN
@@ -158,6 +133,17 @@ class EGNN_Encoder(nn.Module):
         h, x = self.egnn(h, x, edges, edge_attr)
         return h
     
+from model.schnet import SchNet
+
+class Net3D(torch.nn.Module):
+    def __init__(self):
+        super(Net3D, self).__init__()
+        self.layer = SchNet()
+        
+    def forward(self, drug):
+        feats = self.layer(drug.z, drug.pos, drug.batch)
+        return feats
+
 
 class DTA_norm(torch.nn.Module):
     def __init__(self, feature_type):
@@ -169,11 +155,17 @@ class DTA_norm(torch.nn.Module):
         elif feature_type == 'FP-MACCS':
             self.drug_net = FPNet(dim=167)
             drug_out = 64
+        elif feature_type == 'ChemBERTa':
+            self.drug_net = FPNet(dim=384)
+            drug_out = 64
         elif feature_type == '2D-GNN':
             self.drug_net = GCNNet(dim=133)
             drug_out = 133
-        elif feature_type == '3D-GNN':
+        elif feature_type == '3D-GNN-egnn':
             self.drug_net = EGNN_Encoder(n_layers=2)
+            drug_out = 64
+        elif feature_type == '3D-GNN':
+            self.drug_net = Net3D()
             drug_out = 64
         elif feature_type == 'CNN':
             self.drug_net = CNNNet()
@@ -222,10 +214,16 @@ class DTA_simple(torch.nn.Module): # not use batch norm
         elif feature_type == 'FP-MACCS':
             self.drug_net = FPNet(dim=167)
             drug_out = 64
+        elif feature_type == 'ChemBERTa':
+            self.drug_net = FPNet(dim=384)
+            drug_out = 64
         elif feature_type == '2D-GNN':
             self.drug_net = GCNNet(dim=133)
             drug_out = 133
         elif feature_type == '3D-GNN':
+            self.drug_net = Net3D()
+            drug_out = 64
+        elif feature_type == '3D-GNN-egnn':
             self.drug_net = EGNN_Encoder(n_layers=2)
             drug_out = 64
         elif feature_type == 'CNN':
@@ -269,10 +267,16 @@ class Property_norm(torch.nn.Module):
         elif feature_type == 'FP-MACCS':
             self.molnet = FPNet(dim=167)
             mol_out = 64
+        elif feature_type == 'ChemBERTa':
+            self.molnet = FPNet(dim=384)
+            mol_out = 64
         elif feature_type == '2D-GNN':
             self.molnet = GCNNet(dim=133)
             mol_out = 133
         elif feature_type == '3D-GNN':
+            self.molnet = Net3D()
+            mol_out = 64
+        elif feature_type == '3D-GNN-egnn':
             self.molnet = EGNN_Encoder(n_layers=2)
             mol_out = 64
         elif feature_type == 'CNN':
@@ -280,18 +284,18 @@ class Property_norm(torch.nn.Module):
             mol_out = 64
             
         self.mol_mlp = nn.Sequential(
-            nn.Linear(mol_out, 256),
+            nn.Linear(mol_out, 128),
             nn.ReLU(),
-            nn.BatchNorm1d(256),
+            nn.BatchNorm1d(128),
             nn.Dropout(0.1)
         )
         
         self.predictor = nn.Sequential(
-            nn.Linear(256, 512),
+            nn.Linear(128, 256),
             nn.ReLU(),
-            nn.BatchNorm1d(512),
+            nn.BatchNorm1d(256),
             nn.Dropout(0.1),
-            nn.Linear(512, 256),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.BatchNorm1d(256),
             nn.Dropout(0.1),
@@ -316,10 +320,16 @@ class Property_simple(torch.nn.Module): # not use batch norm
         elif feature_type == 'FP-MACCS':
             self.molnet = FPNet(dim=167)
             mol_out = 64
+        elif feature_type == 'ChemBERTa':
+            self.molnet = FPNet(dim=384)
+            mol_out = 64
         elif feature_type == '2D-GNN':
             self.molnet = GCNNet(dim=133)
             mol_out = 133
         elif feature_type == '3D-GNN':
+            self.molnet = Net3D()
+            mol_out = 64
+        elif feature_type == '3D-GNN-egnn':
             self.molnet = EGNN_Encoder(n_layers=2)
             mol_out = 64
         elif feature_type == 'CNN':
@@ -327,19 +337,19 @@ class Property_simple(torch.nn.Module): # not use batch norm
             mol_out = 64
             
         self.mol_mlp = nn.Sequential(
-            nn.Linear(mol_out, 256),
+            nn.Linear(mol_out, 128),
             nn.ReLU(),
             nn.Dropout(0.1)
         )
         
         self.predictor = nn.Sequential(
-            nn.Linear(256, 512),
+            nn.Linear(128, 256),
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(512, 256),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(256, num_tasks),
+            nn.Linear(128, num_tasks),
         )
         
     def forward(self, data):

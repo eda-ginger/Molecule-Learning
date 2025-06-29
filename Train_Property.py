@@ -261,7 +261,11 @@ def exec_main(args):
     data_root = "dataset/"
     from data.loader import MoleculeDataset ##
     dataset = MoleculeDataset(data_root + args.dataset, dataset=args.dataset, feature=args.feature)
+    
     # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='FP-Morgan')
+    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='FP-MACCS')
+    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='CNN')
     # dataset = MoleculeDataset(data_root + 'bbbp', dataset='bbbp', feature='2D-GNN')
     # dataset = MoleculeDataset(data_root + 'tox21', dataset='tox21', feature='2D-GNN')
     # dataset = MoleculeDataset(data_root + 'toxcast', dataset='toxcast', feature='2D-GNN')
@@ -295,17 +299,28 @@ def exec_main(args):
 
     #set up model 
     print('### Setup Model ###')
-    model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
-    if args.input_model_file != "" and args.ft_type != 'no_pretrain':
-        print('Load Pretrained parameter ...')
+    if args.feature == '2D-GNN':
+        model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
+        if args.input_model_file != "" and args.ft_type != 'no_pretrain':
+            print('Load Pretrained parameter ...')
 
-        if "SimSGT" in args.input_model_file:
-            model_file = os.path.join('pretrain', args.input_model_file)
-            msg = model.gnn.load_state_dict(torch.load(model_file), map_location='cpu')
-            print(msg)
-    
-        else:        
-            model.from_pretrained(args.input_model_file, device)
+            if "SimSGT" in args.input_model_file:
+                model_file = os.path.join('pretrain', args.input_model_file)
+                msg = model.gnn.load_state_dict(torch.load(model_file), map_location='cpu')
+                print(msg)
+        
+            else:        
+                model.from_pretrained(args.input_model_file, device)
+    # elif args.feature == '3D-GNN':
+    #     from model.experiment_model import Net3D
+    #     model = Net3D()
+    else:
+        from model.experiment_model import Property_simple
+        if args.feature == '2D-GNN-tuto':
+            model = Property_simple('2D-GNN', num_tasks)
+        else:
+            model = Property_simple(args.feature, num_tasks)
+        
         
     
     model.to(device)
@@ -313,20 +328,23 @@ def exec_main(args):
     print(model) ##
 
     #set up optimizer
-    #different learning rate for different part of GNN
-    model_param_group = []
-    if args.ft_type in ['full', 'no_pretrain', 'freeze']: ## original
-        if args.ft_type != 'freeze':
-            model_param_group.append({"params": model.gnn.parameters()})
+    if args.feature == '2D-GNN':
+        #different learning rate for different part of GNN
+        model_param_group = []
+        if args.ft_type in ['full', 'no_pretrain', 'freeze']: ## original
+            if args.ft_type != 'freeze':
+                model_param_group.append({"params": model.gnn.parameters()})
+            
+            if args.graph_pooling == "attention":
+                model_param_group.append({"params": model.pool.parameters(), "lr":args.lr*args.lr_scale})
+            
+            model_param_group.append({"params": model.graph_pred_linear.parameters(), "lr":args.lr*args.lr_scale})
         
-        if args.graph_pooling == "attention":
-            model_param_group.append({"params": model.pool.parameters(), "lr":args.lr*args.lr_scale})
-        
-        model_param_group.append({"params": model.graph_pred_linear.parameters(), "lr":args.lr*args.lr_scale})
-    
+        else:
+            raise ValueError("Invalid fine-tune type option.")
     else:
-        raise ValueError("Invalid fine-tune type option.")
-    
+        model_param_group = [{"params": model.parameters()}]
+        
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
     print(optimizer)
     
