@@ -12,7 +12,7 @@ from torch.nn.utils.weight_norm import weight_norm
 from torch_geometric.nn import GCNConv, GATConv, GINConv
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp
 
-CHARISOSMILEN = 65
+CHARISOSMILEN = 68
 CHARPROTLEN = 25
 
 ########################################################################################################################
@@ -326,6 +326,9 @@ class Property_simple(torch.nn.Module): # not use batch norm
         elif feature_type == '2D-GNN':
             self.molnet = GCNNet(dim=133)
             mol_out = 133
+        elif feature_type == '2D-GNN-5L':
+            self.molnet = GCNNet_5L(dim=133)
+            mol_out = 133
         elif feature_type == '3D-GNN':
             self.molnet = Net3D()
             mol_out = 64
@@ -336,14 +339,8 @@ class Property_simple(torch.nn.Module): # not use batch norm
             self.molnet = CNNNet()
             mol_out = 64
             
-        self.mol_mlp = nn.Sequential(
-            nn.Linear(mol_out, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1)
-        )
-        
         self.predictor = nn.Sequential(
-            nn.Linear(128, 256),
+            nn.Linear(mol_out, 256),
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(256, 128),
@@ -354,12 +351,101 @@ class Property_simple(torch.nn.Module): # not use batch norm
         
     def forward(self, data):
         mol_feats = self.molnet(data)
-        mol_feats = self.mol_mlp(mol_feats)
         pred = self.predictor(mol_feats)
         return pred
 
 
+class Property_ChemBERTa(torch.nn.Module): # not use batch norm
+    def __init__(self, num_tasks):
+        super(Property_ChemBERTa, self).__init__()
+        
+        self.predictor = nn.Sequential(
+            nn.Linear(384, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, num_tasks),
+        )
+        
+    def forward(self, data):
+        pred = self.predictor(data.x)
+        return pred
 
+class GCNNet_5L(torch.nn.Module):
+    def __init__(self, dim=133):
+        super(GCNNet_5L, self).__init__()
+        self.layer1 = GCNConv(dim, dim)
+        self.layer2 = GCNConv(dim, dim)
+        self.layer3 = GCNConv(dim, dim)
+        self.layer4 = GCNConv(dim, dim)
+        self.layer5 = GCNConv(dim, dim)
+        
+    def forward(self, drug):
+        feats, edge_index, batch = drug.x.float(), drug.edge_index, drug.batch
+        x = self.layer1(feats, edge_index)
+        x = F.relu(x)
+        x = self.layer2(x, edge_index)
+        x = F.relu(x)
+        x = self.layer3(x, edge_index)
+        x = F.relu(x)
+        x = self.layer4(x, edge_index)
+        x = F.relu(x)
+        x = self.layer5(x, edge_index)
+        x = F.relu(x)
+        x = gap(x, batch)
+        return x
+
+
+class BaseGNN(torch.nn.Module):
+    def __init__(self, num_layers=5, gnn_type='gin', emb_dim=300):
+        super(BaseGNN, self).__init__()
+        self.num_layers = num_layers
+        self.gnn_type = gnn_type
+        self.emb_dim = emb_dim
+        
+        # Embedding layers for atom type and chirality
+        self.x_embedding1 = nn.Embedding(120, emb_dim)  # atom type embedding
+        self.x_embedding2 = nn.Embedding(8, emb_dim)    # chirality embedding
+        
+        # Initialize embeddings
+        nn.init.xavier_uniform_(self.x_embedding1.weight.data)
+        nn.init.xavier_uniform_(self.x_embedding2.weight.data)
+        
+        # Create layers based on GNN type
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            if gnn_type == 'gcn':
+                self.layers.append(GCNConv(emb_dim, emb_dim))
+            elif gnn_type == 'gat':
+                self.layers.append(GATConv(emb_dim, emb_dim))
+            elif gnn_type == 'gin':
+                # GIN uses MLP for each layer
+                mlp = Sequential(
+                    Linear(emb_dim, emb_dim),
+                    ReLU(),
+                    Linear(emb_dim, emb_dim)
+                )
+                self.layers.append(GINConv(mlp))
+            else:
+                raise ValueError(f"Unsupported GNN type: {gnn_type}")
+        
+    def forward(self, drug):
+        # Extract features and apply embeddings
+        x, edge_index, batch = drug.x, drug.edge_index, drug.batch
+        
+        # Apply embeddings (similar to original GNN)
+        x = self.x_embedding1(x[:, 0]) + self.x_embedding2(x[:, 1])
+        
+        # Pass through GNN layers
+        for layer in self.layers:
+            x = layer(x, edge_index)
+            x = F.relu(x)
+        
+        # Global pooling
+        x = gap(x, batch)
+        return x
 
 
 if __name__ == "__main__":

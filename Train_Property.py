@@ -270,8 +270,12 @@ def exec_main(args):
     # dataset = MoleculeDataset(data_root + 'tox21', dataset='tox21', feature='2D-GNN')
     # dataset = MoleculeDataset(data_root + 'toxcast', dataset='toxcast', feature='2D-GNN')
     # dataset = MoleculeDataset(data_root + 'sider', dataset='sider', feature='2D-GNN')
+    # dataset = MoleculeDataset(data_root + 'clintox', dataset='clintox', feature='2D-GNN-tuto')
     # dataset = MoleculeDataset(data_root + 'clintox', dataset='clintox', feature='2D-GNN')
     # dataset = MoleculeDataset(data_root + 'hiv', dataset='hiv', feature='2D-GNN')
+    # smiles_list = pd.read_csv(data_root + 'clintox' + '/processed/smiles.csv', header=None)[0].tolist()
+    # train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
+    # len(smiles_list)
 
     print('[dataset]') ##
     print(dataset)
@@ -292,7 +296,7 @@ def exec_main(args):
 
     print('[train_dataset example]') ##
     print(train_dataset[0])
-
+    
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers = args.num_workers)
     val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
@@ -300,7 +304,10 @@ def exec_main(args):
     #set up model 
     print('### Setup Model ###')
     if args.feature == '2D-GNN':
-        model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
+        if args.filename == '20250630-2':
+            model = GNN_graphpred(2, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
+        else:
+            model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
         if args.input_model_file != "" and args.ft_type != 'no_pretrain':
             print('Load Pretrained parameter ...')
 
@@ -311,17 +318,15 @@ def exec_main(args):
         
             else:        
                 model.from_pretrained(args.input_model_file, device)
-    # elif args.feature == '3D-GNN':
-    #     from model.experiment_model import Net3D
-    #     model = Net3D()
     else:
         from model.experiment_model import Property_simple
         if args.feature == '2D-GNN-tuto':
-            model = Property_simple('2D-GNN', num_tasks)
+            if args.filename == '20250630-2':
+                model = Property_simple('2D-GNN-5L', num_tasks)
+            else:
+                model = Property_simple('2D-GNN', num_tasks)
         else:
             model = Property_simple(args.feature, num_tasks)
-        
-        
     
     model.to(device)
     print('[model]') ##
@@ -426,6 +431,14 @@ def exec_main(args):
                 
                 if best_test_mse[1] > val_mae: # evaluate based on validation sets
                     best_test_mse = [train_mae, val_mae, test_mae, epoch]
+
+            # Log to wandb
+            if args.use_wandb:
+                wandb.log({
+                    "train_loss": train_mse,
+                    "val_loss": val_mse
+                })
+
 
             train_mse_list.append(train_mse); train_mae_list.append(train_mae); train_rmse_list.append(train_rmse)
             val_mse_list.append(val_mse); val_mae_list.append(val_mae); val_rmse_list.append(val_rmse)
@@ -543,8 +556,12 @@ def main():
     print("train: %.2f val: %.2f test: %.2f" % (train_results.std(), val_results.std(), test_results.std()))
     
     print(f'================== Summary ==================')
-    print(f"Valid Score: {val_results.mean():.1f} (±{val_results.std():.2f})")
-    print(f"Test Score: {test_results.mean():.1f} (±{test_results.std():.2f})")
+    if task_type == 'cls':
+        print(f"Valid Score: {val_results.mean():.1f} (±{val_results.std():.2f})")
+        print(f"Test Score: {test_results.mean():.1f} (±{test_results.std():.2f})")
+    elif task_type == 'reg':
+        print(f"Valid Score: {val_results.mean():.6f} (±{val_results.std():.2f})")
+        print(f"Test Score: {test_results.mean():.6f} (±{test_results.std():.2f})")
 
 if __name__ == "__main__":
     main()
