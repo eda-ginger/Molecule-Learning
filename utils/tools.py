@@ -119,8 +119,12 @@ def save_checkpoint(state, is_best, filename="checkpoint.pt", best_filename="mod
     
     if is_best:
         best_filepath = output_dir / best_filename
-        shutil.copyfile(filepath, best_filepath)
-        logger.info(f"Saved new best model to {best_filepath}")
+        # Only copy if source and destination are different
+        if filepath != best_filepath:
+            shutil.copyfile(filepath, best_filepath)
+            logger.info(f"Saved new best model to {best_filepath}")
+        else:
+            logger.info(f"Best model already saved as {filepath}")
 
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, device=torch.device('cpu')):

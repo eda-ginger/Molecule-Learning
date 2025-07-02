@@ -207,14 +207,16 @@ def Train_CV(args):
                     'args': vars(args) # Save args as dict
                 }, is_best=True, filename='model_best.pt', output_dir=fold_output_dir)
                 
-                # Also save a copy with fold information
+                # Also save a copy with fold information in project root
+                project_root = Path('logs') / Path(args.project)
+                project_root.mkdir(parents=True, exist_ok=True)
                 save_checkpoint({
                     'epoch': epoch,
                     'state_dict': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'best_metric': best_val_metric,
                     'args': vars(args) # Save args as dict
-                }, is_best=True, filename=f'model_best_fold_{fold_idx}.pt', output_dir=fold_output_dir)
+                }, is_best=True, filename=f'model_best_fold_{fold_idx}.pt', output_dir=project_root)
             else:
                 epochs_no_improve += 1
             
