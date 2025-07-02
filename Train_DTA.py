@@ -198,14 +198,23 @@ def Train_CV(args):
                 best_val_metric = current_val_metric
                 epochs_no_improve = 0
                 
-                filename = 'checkpoint_last.pt'
+                # Save best model for this fold
                 save_checkpoint({
                     'epoch': epoch,
                     'state_dict': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'best_metric': best_val_metric,
                     'args': vars(args) # Save args as dict
-                }, is_best=True, filename=filename, output_dir=fold_output_dir)
+                }, is_best=True, filename='model_best.pt', output_dir=fold_output_dir)
+                
+                # Also save a copy with fold information
+                save_checkpoint({
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'best_metric': best_val_metric,
+                    'args': vars(args) # Save args as dict
+                }, is_best=True, filename=f'model_best_fold_{fold_idx}.pt', output_dir=fold_output_dir)
             else:
                 epochs_no_improve += 1
             
@@ -234,6 +243,12 @@ def Train_CV(args):
                                 collate_fn=CustomDataset.collate_fn, num_workers=args.n_workers)
         _, test_metrics = evaluate(model_test, test_loader, loss_fn, device)
         all_test_metrics.append(test_metrics)
+        
+        # Log individual fold test performance
+        logger.info(f"\n--- Fold {fold_idx} Test Results ---")
+        for metric, value in test_metrics.items():
+            logger.info(f"Fold {fold_idx} Test {metric}: {value:.4f}")
+        logger.info(f"--- End Fold {fold_idx} Results ---\n")
             
         # save fold's test metrics
         fold_metrics_file = fold_output_dir / f"TST_metrics.json"
@@ -275,31 +290,68 @@ def Train_CV(args):
     logger.info(f"Average test metrics saved to {metrics_file}")
     
     # Log and save results
-    logger.info("\nAverage Test Metrics:")
+    logger.info("\n" + "="*60)
+    logger.info("CROSS-VALIDATION TEST RESULTS SUMMARY")
+    logger.info("="*60)
+    
+    # Print individual fold results
+    logger.info("\nIndividual Fold Results:")
+    logger.info("-" * 40)
+    for fold_idx, fold_metrics in enumerate(all_test_metrics, 1):
+        logger.info(f"Fold {fold_idx}:")
+        for metric in metrics_names:
+            logger.info(f"  {metric}: {fold_metrics[metric]:.4f}")
+        logger.info("")
+    
+    # Print average results
+    logger.info("\nCross-Validation Average Results:")
+    logger.info("-" * 40)
+    for metric in metrics_names:
+        avg_value = avg_test_metrics[metric]
+        std_value = std_test_metrics[metric]
+        result_line = f"{metric}: {avg_value:.4f} (±{std_value:.4f})"
+        logger.info(result_line)
+    
+    logger.info("="*60)
+    
+    # Save detailed results to file
     result_file = Path('logs') / Path(args.project) / "result.log"
     with open(result_file, 'a+') as f:
         # Write project information
-        f.write(f"\n{'='*50}\n")
+        f.write(f"\n{'='*60}\n")
         f.write(f"Project: {args.project}\n")
         f.write(f"Feature: {args.feature}\n")
         f.write(f"Parameters: {count_parameters(model):,}\n")
         f.write(f"Batch Size: {args.batch_size}\n")
         f.write(f"Epochs: {args.n_epochs}\n")
         f.write(f"Cross-validation Folds: {len(seeds)}\n")
-        f.write(f"{'='*50}\n\n")
+        f.write(f"Seeds: {seeds}\n")
+        f.write(f"{'='*60}\n\n")
         
         # Write model architecture
         f.write("Model Architecture:\n")
         f.write(str(model))
-        f.write(f"\n\n{'='*50}\n")
-        f.write("Test Results:\n")
+        f.write(f"\n\n{'='*60}\n")
         
+        # Write individual fold results
+        f.write("Individual Fold Test Results:\n")
+        f.write("-" * 40 + "\n")
+        for fold_idx, fold_metrics in enumerate(all_test_metrics, 1):
+            f.write(f"Fold {fold_idx}:\n")
+            for metric in metrics_names:
+                f.write(f"  {metric}: {fold_metrics[metric]:.4f}\n")
+            f.write("\n")
+        
+        # Write average results
+        f.write("Cross-Validation Average Results:\n")
+        f.write("-" * 40 + "\n")
         for metric in metrics_names:
             avg_value = avg_test_metrics[metric]
             std_value = std_test_metrics[metric]
-            result_line = f"Test {metric}: {avg_value:.3f} (±{std_value:.2f})"
-            logger.info(result_line)
+            result_line = f"{metric}: {avg_value:.4f} (±{std_value:.4f})"
             f.write(result_line + "\n")
+        
+        f.write(f"\n{'='*60}\n")
 
 if __name__ == "__main__":
     args = set_config()

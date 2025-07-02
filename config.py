@@ -7,11 +7,11 @@ def set_config():
     # Data arguments from prepare.py (assuming these are still needed for context)
     parser.add_argument('--feature', type=str, default='ChemBERTa', choices=['CNN','2D-GNN', '3D-GNN', 'FP-Morgan', 'FP-MACCS', 'ChemBERTa'], help='Feature type')
     parser.add_argument('--cache_dir', type=str, default='./dta_dataset/', help='Directory for cached data and splits')
-    parser.add_argument('--data_name', type=str, default='davis', help='Dataset name')
+    parser.add_argument('--data_name', type=str, default='kiba', help='Dataset name')
 
     # Training process arguments
     parser.add_argument('--seed', type=int, default=2025, help='Random seed for reproducibility')
-    parser.add_argument('--n_epochs', type=int, default=100, help='Number of training epochs')
+    parser.add_argument('--n_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=256, help='Batch size for training and evaluation')
     parser.add_argument('--learning_rate', '--lr', type=float, default=1e-3, help='Initial learning rate')
     parser.add_argument('--weight_decay', type=float, default=1e-5, help='Weight decay for optimizer')

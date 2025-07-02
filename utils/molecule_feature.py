@@ -101,6 +101,33 @@ def atom_features(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]]:
     return features           
     
 
+def atom_features_simple(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]]:
+    r"""
+    node feature
+    : 원자 번호, 카이랄성
+    """
+    # features = feature_to_onehot(atom.GetAtomicNum() - 1, ATOM_FEATURES['atomic_num']) + \
+    #         feature_to_onehot(int(atom.GetChiralTag()), ATOM_FEATURES['chiral_tag'])
+    allowable_features = {
+        'possible_atomic_num_list' : list(range(1, 119)),
+        'possible_chirality_list' : [
+            Chem.rdchem.ChiralType.CHI_UNSPECIFIED,
+            Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
+            Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
+            Chem.rdchem.ChiralType.CHI_OTHER,        
+            Chem.rdchem.ChiralType.CHI_ALLENE,
+            Chem.rdchem.ChiralType.CHI_OCTAHEDRAL,
+            Chem.rdchem.ChiralType.CHI_SQUAREPLANAR,
+            Chem.rdchem.ChiralType.CHI_TETRAHEDRAL,
+            Chem.rdchem.ChiralType.CHI_TRIGONALBIPYRAMIDAL,
+        ]}
+                
+    atom_feature = [allowable_features['possible_atomic_num_list'].index(
+        atom.GetAtomicNum())] + [allowable_features[
+        'possible_chirality_list'].index(atom.GetChiralTag())]
+    return atom_feature
+
+
 def smiles_to_feature(smiles: str, dim3d: str = False, 
                       with_hydrogen: bool = False,
                       kekulize: bool = False) -> 'torch_geometric.data.Data':
@@ -180,6 +207,47 @@ def mol_to_feature(mol: Chem.Mol) -> 'torch_geometric.data.Data':
         xs.append(current_atom_feat)
         
     x = torch.tensor(xs, dtype=torch.long).view(-1, 133)
+
+    edge_indices, edge_attrs = [], []
+    for bond in mol.GetBonds():
+        i = bond.GetBeginAtomIdx()
+        j = bond.GetEndAtomIdx()
+
+        edge_feature = [EDGE_FEATURES['possible_bonds'].index(bond.GetBondType())] + [EDGE_FEATURES['possible_bond_dirs'].index(bond.GetBondDir())]
+
+        edge_indices += [[i, j], [j, i]]
+        edge_attrs += [edge_feature, edge_feature]
+
+    edge_index = torch.tensor(edge_indices)
+    edge_index = edge_index.t().to(torch.long).view(2, -1)
+    edge_attr = torch.tensor(edge_attrs, dtype=torch.long).view(-1, 2)
+
+    if edge_index.numel() > 0:  # Sort indices.
+        perm = (edge_index[0] * x.size(0) + edge_index[1]).argsort()
+        edge_index, edge_attr = edge_index[:, perm], edge_attr[perm]
+
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+
+
+def mol_to_feature_simple(mol: Chem.Mol) -> 'torch_geometric.data.Data':
+    r"""Converts a SMILES string to a :class:`torch_geometric.data.Data`
+    instance.
+
+    Args:
+        smiles (str): The SMILES string.
+        with_hydrogen (bool, optional): If set to :obj:`True`, will store
+            hydrogens in the molecule graph. (default: :obj:`False`)
+        kekulize (bool, optional): If set to :obj:`True`, converts aromatic
+            bonds to single/double bonds. (default: :obj:`False`)
+    """
+
+    xs: List[List[int]] = []
+    tmp = 0
+    for atom in mol.GetAtoms():
+        current_atom_feat = atom_features_simple(atom)
+        xs.append(current_atom_feat)
+        
+    x = torch.tensor(xs, dtype=torch.long).view(-1, 2)
 
     edge_indices, edge_attrs = [], []
     for bond in mol.GetBonds():

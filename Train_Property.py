@@ -320,7 +320,12 @@ def exec_main(args):
                 model.from_pretrained(args.input_model_file, device)
     else:
         from model.experiment_model import Property_simple
-        if args.feature == '2D-GNN-tuto':
+        if args.feature == '2D-GNN-copy':
+            if args.filename == '20250630-2':
+                model = Property_simple('2D-GNN-copy-simple', num_tasks)
+            else:
+                model = Property_simple('2D-GNN-copy', num_tasks)
+        elif args.feature == '2D-GNN-tuto':
             if args.filename == '20250630-2':
                 model = Property_simple('2D-GNN-5L', num_tasks)
             else:

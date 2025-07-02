@@ -79,10 +79,14 @@ class CNNNet(torch.nn.Module):
     
 
 class GCNNet(torch.nn.Module):
-    def __init__(self, dim=133):
+    def __init__(self, dim=133, out=False):
         super(GCNNet, self).__init__()
-        self.layer1 = GCNConv(dim, dim)
-        self.layer2 = GCNConv(dim, dim)
+        if out:
+            self.layer1 = GCNConv(dim, 128)
+            self.layer2 = GCNConv(128, 128)
+        else:
+            self.layer1 = GCNConv(dim, dim)
+            self.layer2 = GCNConv(dim, dim)
         
     def forward(self, drug):
         feats, edge_index, batch = drug.x.float(), drug.edge_index, drug.batch
@@ -328,7 +332,12 @@ class Property_simple(torch.nn.Module): # not use batch norm
             mol_out = 133
         elif feature_type == '2D-GNN-5L':
             self.molnet = GCNNet_5L(dim=133)
-            mol_out = 133
+        elif feature_type == '2D-GNN-copy-simple':
+            self.molnet = GCNNet(dim=2, out=True)
+            mol_out = 128
+        elif feature_type == '2D-GNN-copy':
+            self.molnet = BaseGNN()
+            mol_out = 300
         elif feature_type == '3D-GNN':
             self.molnet = Net3D()
             mol_out = 64
@@ -354,24 +363,6 @@ class Property_simple(torch.nn.Module): # not use batch norm
         pred = self.predictor(mol_feats)
         return pred
 
-
-class Property_ChemBERTa(torch.nn.Module): # not use batch norm
-    def __init__(self, num_tasks):
-        super(Property_ChemBERTa, self).__init__()
-        
-        self.predictor = nn.Sequential(
-            nn.Linear(384, 256),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, num_tasks),
-        )
-        
-    def forward(self, data):
-        pred = self.predictor(data.x)
-        return pred
 
 class GCNNet_5L(torch.nn.Module):
     def __init__(self, dim=133):
@@ -405,48 +396,41 @@ class BaseGNN(torch.nn.Module):
         self.gnn_type = gnn_type
         self.emb_dim = emb_dim
         
-        # Embedding layers for atom type and chirality
-        self.x_embedding1 = nn.Embedding(120, emb_dim)  # atom type embedding
-        self.x_embedding2 = nn.Embedding(8, emb_dim)    # chirality embedding
+        self.x_embedding1 = nn.Embedding(120, emb_dim)
+        self.x_embedding2 = nn.Embedding(8, emb_dim)
         
-        # Initialize embeddings
         nn.init.xavier_uniform_(self.x_embedding1.weight.data)
         nn.init.xavier_uniform_(self.x_embedding2.weight.data)
         
-        # Create layers based on GNN type
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
             if gnn_type == 'gcn':
-                self.layers.append(GCNConv(emb_dim, emb_dim))
+                from model.base_model import GCNConv as customGCNConv
+                self.layers.append(customGCNConv(emb_dim, emb_dim))
             elif gnn_type == 'gat':
-                self.layers.append(GATConv(emb_dim, emb_dim))
+                from model.base_model import GATConv as customGATConv
+                self.layers.append(customGATConv(emb_dim, emb_dim))
             elif gnn_type == 'gin':
-                # GIN uses MLP for each layer
-                mlp = Sequential(
-                    Linear(emb_dim, emb_dim),
-                    ReLU(),
-                    Linear(emb_dim, emb_dim)
-                )
-                self.layers.append(GINConv(mlp))
+                from model.base_model import GINConv as customGINConv
+                self.layers.append(customGINConv(emb_dim, emb_dim))
             else:
                 raise ValueError(f"Unsupported GNN type: {gnn_type}")
+                
+        # BatchNorm
+        self.batch_norms = nn.ModuleList([nn.BatchNorm1d(emb_dim) for _ in range(num_layers)])
         
     def forward(self, drug):
-        # Extract features and apply embeddings
-        x, edge_index, batch = drug.x, drug.edge_index, drug.batch
+        x, edge_index, edge_attr, batch = drug.x, drug.edge_index, drug.edge_attr, drug.batch
         
-        # Apply embeddings (similar to original GNN)
         x = self.x_embedding1(x[:, 0]) + self.x_embedding2(x[:, 1])
         
-        # Pass through GNN layers
-        for layer in self.layers:
-            x = layer(x, edge_index)
+        for i, layer in enumerate(self.layers):
+            x = layer(x, edge_index, edge_attr)  # edge_attr 전달
+            x = self.batch_norms[i](x)
             x = F.relu(x)
         
-        # Global pooling
         x = gap(x, batch)
         return x
-
 
 if __name__ == "__main__":
     egnn = EGNN_Encoder(device='cpu')
