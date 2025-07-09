@@ -101,7 +101,7 @@ def atom_features(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]]:
     return features           
     
 
-def atom_features_simple(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]]:
+def atom_features_simple(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]]: # atom, chiral 2
     r"""
     node feature
     : 원자 번호, 카이랄성
@@ -126,6 +126,26 @@ def atom_features_simple(atom: Chem.rdchem.Atom) -> List[Union[bool, int, float]
         atom.GetAtomicNum())] + [allowable_features[
         'possible_chirality_list'].index(atom.GetChiralTag())]
     return atom_feature
+
+
+def atom_features_simple2(atom: Chem.rdchem.Atom, fi='essential') -> List[Union[bool, int, float]]: # atom, chiral 106
+    r"""
+    node feature
+    : 원자 번호, 카이랄성
+    """
+    
+    if fi == 'essential':
+        features = feature_to_onehot(atom.GetAtomicNum() - 1, ATOM_FEATURES['atomic_num']) + \
+                feature_to_onehot(int(atom.GetChiralTag()), ATOM_FEATURES['chiral_tag'])
+    
+    else: # 133 - 106 = 27
+        features = feature_to_onehot(atom.GetTotalDegree(), ATOM_FEATURES['degree']) + \
+            feature_to_onehot(atom.GetFormalCharge(), ATOM_FEATURES['formal_charge']) + \
+            feature_to_onehot(int(atom.GetTotalNumHs()), ATOM_FEATURES['num_Hs']) + \
+            feature_to_onehot(int(atom.GetHybridization()), ATOM_FEATURES['hybridization']) + \
+            [1 if atom.GetIsAromatic() else 0] + \
+            [atom.GetMass() * 0.01] # scaled to about the same range as other features
+    return features
 
 
 def smiles_to_feature(smiles: str, dim3d: str = False, 
@@ -229,7 +249,7 @@ def mol_to_feature(mol: Chem.Mol) -> 'torch_geometric.data.Data':
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 
-def mol_to_feature_simple(mol: Chem.Mol) -> 'torch_geometric.data.Data':
+def mol_to_feature_simple(mol: Chem.Mol, tp='graphcl') -> 'torch_geometric.data.Data':
     r"""Converts a SMILES string to a :class:`torch_geometric.data.Data`
     instance.
 
@@ -244,10 +264,20 @@ def mol_to_feature_simple(mol: Chem.Mol) -> 'torch_geometric.data.Data':
     xs: List[List[int]] = []
     tmp = 0
     for atom in mol.GetAtoms():
-        current_atom_feat = atom_features_simple(atom)
+        if tp == 'graphcl':
+            current_atom_feat = atom_features_simple(atom)
+        elif tp == 'remain':
+            current_atom_feat = atom_features_simple2(atom, fi='remain')
+        else:
+            current_atom_feat = atom_features_simple2(atom)
         xs.append(current_atom_feat)
         
-    x = torch.tensor(xs, dtype=torch.long).view(-1, 2)
+    if tp == 'graphcl':
+        x = torch.tensor(xs, dtype=torch.long).view(-1, 2)
+    elif tp == 'remain':
+        x = torch.tensor(xs, dtype=torch.long).view(-1, 27)
+    else:
+        x = torch.tensor(xs, dtype=torch.long).view(-1, 106)
 
     edge_indices, edge_attrs = [], []
     for bond in mol.GetBonds():

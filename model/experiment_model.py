@@ -330,14 +330,90 @@ class Property_simple(torch.nn.Module): # not use batch norm
         elif feature_type == '2D-GNN':
             self.molnet = GCNNet(dim=133)
             mol_out = 133
-        elif feature_type == '2D-GNN-5L':
-            self.molnet = GCNNet_5L(dim=133)
-        elif feature_type == '2D-GNN-copy-simple':
-            self.molnet = GCNNet(dim=2, out=True)
-            mol_out = 128
-        elif feature_type == '2D-GNN-copy':
-            self.molnet = BaseGNN()
+        
+        # 2D-GNN-copy (2)
+        elif feature_type == '2D-GNN-copy-2L-GIN':
+            self.molnet = BaseGNN(num_layers=2, emb=False, bf_dim=2)
             mol_out = 300
+        elif feature_type == '2D-GNN-copy-2L-GIN-emb':
+            self.molnet = BaseGNN(num_layers=2)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-5L-GIN':
+            self.molnet = BaseGNN(num_layers=5, emb=False, bf_dim=2)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-5L-GIN-emb':
+            self.molnet = BaseGNN(num_layers=5)
+            mol_out = 300
+
+        elif feature_type == '2D-GNN-copy-2L-GCN':
+            self.molnet = BaseGNN(num_layers=2, gnn_type='gcn', emb=False, bf_dim=2)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-2L-GCN-emb':
+            self.molnet = BaseGNN(num_layers=2, gnn_type='gcn')
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-5L-GCN':
+            self.molnet = BaseGNN(num_layers=5, gnn_type='gcn', emb=False, bf_dim=2)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-5L-GCN-emb':
+            self.molnet = BaseGNN(num_layers=5, gnn_type='gcn')
+            mol_out = 300
+        
+        # 2D-GNN-copy > emb > linear
+        elif feature_type == '2D-GNN-copy-2L-GIN-emb-fit':
+            self.molnet = BaseGNN(num_layers=2, fit=True)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-5L-GIN-emb-fit':
+            self.molnet = BaseGNN(num_layers=5, fit=True)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-2L-GCN-emb-fit':
+            self.molnet = BaseGNN(num_layers=2, gnn_type='gcn', fit=True)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy-5L-GCN-emb-fit':
+            self.molnet = BaseGNN(num_layers=5, gnn_type='gcn', fit=True)
+            mol_out = 300
+            
+        # 2D-GNN-copy2 (106) - 1
+        elif feature_type == '2D-GNN-copy2-2L-GIN':
+            self.molnet = BaseGNN(num_layers=2, emb=False, bf_dim=106)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy2-5L-GIN':
+            self.molnet = BaseGNN(num_layers=5, emb=False, bf_dim=106)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy2-2L-GCN':
+            self.molnet = BaseGNN(num_layers=2, gnn_type='gcn', emb=False, bf_dim=106)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy2-5L-GCN':
+            self.molnet = BaseGNN(num_layers=5, gnn_type='gcn', emb=False, bf_dim=106)
+            mol_out = 300
+
+        # 2D-GNN-copy3 (27)
+        elif feature_type == '2D-GNN-copy3-2L-GIN':
+            self.molnet = BaseGNN(num_layers=2, emb=False, bf_dim=27)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy3-5L-GIN':
+            self.molnet = BaseGNN(num_layers=5, emb=False, bf_dim=27)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy3-2L-GCN':
+            self.molnet = BaseGNN(num_layers=2, gnn_type='gcn', emb=False, bf_dim=27)
+            mol_out = 300
+        elif feature_type == '2D-GNN-copy3-5L-GCN':
+            self.molnet = BaseGNN(num_layers=5, gnn_type='gcn', emb=False, bf_dim=27)
+            mol_out = 300
+
+        # 2D-GNN-tuto (133) - 0
+        elif feature_type == '2D-GNN-tuto-2L-GIN':
+            self.molnet = BaseGNN(num_layers=2, emb=False, bf_dim=133)
+            mol_out = 300
+        elif feature_type == '2D-GNN-tuto-5L-GIN':
+            self.molnet = BaseGNN(num_layers=5, emb=False, bf_dim=133)
+            mol_out = 300
+        elif feature_type == '2D-GNN-tuto-2L-GCN':
+            self.molnet = BaseGNN(num_layers=2, gnn_type='gcn', emb=False, bf_dim=133)
+            mol_out = 300
+        elif feature_type == '2D-GNN-tuto-5L-GCN':
+            self.molnet = BaseGNN(num_layers=5, gnn_type='gcn', emb=False, bf_dim=133)
+            mol_out = 300        
+        
         elif feature_type == '3D-GNN':
             self.molnet = Net3D()
             mol_out = 64
@@ -364,43 +440,30 @@ class Property_simple(torch.nn.Module): # not use batch norm
         return pred
 
 
-class GCNNet_5L(torch.nn.Module):
-    def __init__(self, dim=133):
-        super(GCNNet_5L, self).__init__()
-        self.layer1 = GCNConv(dim, dim)
-        self.layer2 = GCNConv(dim, dim)
-        self.layer3 = GCNConv(dim, dim)
-        self.layer4 = GCNConv(dim, dim)
-        self.layer5 = GCNConv(dim, dim)
-        
-    def forward(self, drug):
-        feats, edge_index, batch = drug.x.float(), drug.edge_index, drug.batch
-        x = self.layer1(feats, edge_index)
-        x = F.relu(x)
-        x = self.layer2(x, edge_index)
-        x = F.relu(x)
-        x = self.layer3(x, edge_index)
-        x = F.relu(x)
-        x = self.layer4(x, edge_index)
-        x = F.relu(x)
-        x = self.layer5(x, edge_index)
-        x = F.relu(x)
-        x = gap(x, batch)
-        return x
-
-
 class BaseGNN(torch.nn.Module):
-    def __init__(self, num_layers=5, gnn_type='gin', emb_dim=300):
+    def __init__(self, num_layers=5, gnn_type='gin', emb_dim=300, bf_dim=2, emb=True, fit=False):
         super(BaseGNN, self).__init__()
         self.num_layers = num_layers
         self.gnn_type = gnn_type
         self.emb_dim = emb_dim
         
-        self.x_embedding1 = nn.Embedding(120, emb_dim)
-        self.x_embedding2 = nn.Embedding(8, emb_dim)
+        self.emb = emb
+        self.fit = fit
         
-        nn.init.xavier_uniform_(self.x_embedding1.weight.data)
-        nn.init.xavier_uniform_(self.x_embedding2.weight.data)
+        if self.emb:        
+            if not self.fit:
+                self.x_embedding1 = nn.Embedding(120, emb_dim)
+                self.x_embedding2 = nn.Embedding(8, emb_dim)
+                
+            else:
+                self.x_embedding1 = nn.Embedding(120, 101)
+                self.x_embedding2 = nn.Embedding(8, 5)
+                self.linear = nn.Linear(106, emb_dim)
+                
+            nn.init.xavier_uniform_(self.x_embedding1.weight.data)
+            nn.init.xavier_uniform_(self.x_embedding2.weight.data)
+        else:
+            self.linear = nn.Linear(bf_dim, emb_dim)
         
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
@@ -422,7 +485,15 @@ class BaseGNN(torch.nn.Module):
     def forward(self, drug):
         x, edge_index, edge_attr, batch = drug.x, drug.edge_index, drug.edge_attr, drug.batch
         
-        x = self.x_embedding1(x[:, 0]) + self.x_embedding2(x[:, 1])
+        if self.emb:
+            if not self.fit:
+                x = self.x_embedding1(x[:, 0]) + self.x_embedding2(x[:, 1])
+            else: 
+                # concat & linear
+                x = torch.cat([self.x_embedding1(x[:, 0]), self.x_embedding2(x[:, 1])], dim=1)
+                x = self.linear(x)
+        else:
+            x = self.linear(x.float())
         
         for i, layer in enumerate(self.layers):
             x = layer(x, edge_index, edge_attr)  # edge_attr 전달

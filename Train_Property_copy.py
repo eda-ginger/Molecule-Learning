@@ -415,7 +415,7 @@ def exec_main(args):
         val_acc_list = []
         test_acc_list = []
 
-        best_test_auc = [0, 0, 0, 0] # order: [train ROC-AUC, valid ROC-AUC, test ROC-AUC, best ROC-AUC epoch]
+        best_test_auc = [0, 0, 0, 0, None] # order: [train ROC-AUC, valid ROC-AUC, test ROC-AUC, best ROC-AUC epoch, best model state]
         for epoch in range(1, args.epochs+1):
             print("==== epoch " + str(epoch))
             
@@ -442,7 +442,7 @@ def exec_main(args):
             print("train AUC: %f val AUC: %f test AUC: %f" % (train_acc, val_acc, test_acc)) ## modify: style
             
             if best_test_auc[1] < val_acc: # evaluate based on validation sets
-                best_test_auc = [train_acc, val_acc, test_acc, epoch]
+                best_test_auc = [train_acc, val_acc, test_acc, epoch, model.state_dict().copy()]
 
             val_acc_list.append(val_acc)
             test_acc_list.append(test_acc)
@@ -454,7 +454,7 @@ def exec_main(args):
         val_mse_list, val_mae_list, val_rmse_list = [], [], []
         test_mse_list, test_mae_list, test_rmse_list = [], [], []
         
-        best_test_mse = [1000, 1000, 1000, 0] # order: [train ROC-AUC, valid ROC-AUC, test ROC-AUC, best ROC-AUC epoch]
+        best_test_mse = [1000, 1000, 1000, 0, None] # order: [train metric, valid metric, test metric, best epoch, best model state]
         for epoch in range(1, args.epochs+1):
             print("==== epoch " + str(epoch))
             
@@ -475,13 +475,13 @@ def exec_main(args):
                 print("train RMSE: %.6f val RMSE: %.6f test RMSE: %.6f" % (train_rmse, val_rmse, test_rmse))
 
                 if best_test_mse[1] > val_rmse: # evaluate based on validation sets
-                    best_test_mse = [train_rmse, val_rmse, test_rmse, epoch]
+                    best_test_mse = [train_rmse, val_rmse, test_rmse, epoch, model.state_dict().copy()]
 
             elif args.dataset in ['qm7', 'qm8', 'qm9']:
                 print("train MAE: %.6f val MAE: %.6f test MAE: %.6f" % (train_mae, val_mae, test_mae))
                 
                 if best_test_mse[1] > val_mae: # evaluate based on validation sets
-                    best_test_mse = [train_mae, val_mae, test_mae, epoch]
+                    best_test_mse = [train_mae, val_mae, test_mae, epoch, model.state_dict().copy()]
 
             # Log to wandb
             if args.use_wandb:
@@ -489,7 +489,6 @@ def exec_main(args):
                     "train_loss": train_mse,
                     "val_loss": val_mse
                 })
-
 
             train_mse_list.append(train_mse); train_mae_list.append(train_mae); train_rmse_list.append(train_rmse)
             val_mse_list.append(val_mse); val_mae_list.append(val_mae); val_rmse_list.append(val_rmse)
@@ -567,8 +566,8 @@ def main():
         else:
             print(f'================== {i+1} exec - data seed: {args.seed}, run seed: {args.runseed} ==================')
 
-
-        train_result, val_result, test_result, epoch, task_type = exec_main(args)
+        train_result, val_result, test_result, epoch, best_model_state, task_type = exec_main(args)
+        
         print("[BEST - Epoch: %d] train: %.6f val: %.6f test: %.6f" % (epoch, train_result, val_result, test_result))
 
         if task_type == 'cls':
@@ -588,6 +587,17 @@ def main():
                 result_df.to_csv(fname, mode='w', index=False)
             else:
                 result_df.to_csv(fname, mode='a', index=False, header=False)
+            
+            # Save best model for this seed
+            if best_model_state is not None:
+                model_save_dir = os.path.join('experiments', args.feature, 'models')
+                os.makedirs(model_save_dir, exist_ok=True)
+                model_filename = f"{args.project}_{args.runseed}_best_model.pth"
+                model_save_path = os.path.join(model_save_dir, model_filename)
+                
+                print(model_save_path)
+                torch.save(best_model_state, model_save_path)
+                print(f"Best model saved: {model_save_path}")
         
         train_results = np.append(train_results, train_result)
         val_results = np.append(val_results, val_result)
@@ -611,8 +621,8 @@ def main():
         print(f"Valid Score: {val_results.mean():.1f} (±{val_results.std():.2f})")
         print(f"Test Score: {test_results.mean():.1f} (±{test_results.std():.2f})")
     elif task_type == 'reg':
-        print(f"Valid Score: {val_results.mean():.6f} (±{val_results.std():.2f})")
-        print(f"Test Score: {test_results.mean():.6f} (±{test_results.std():.2f})")
+        print(f"Valid Score: {val_results.mean():.2f} (±{val_results.std():.2f})")
+        print(f"Test Score: {test_results.mean():.2f} (±{test_results.std():.2f})")
 
 if __name__ == "__main__":
     main()
