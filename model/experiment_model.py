@@ -504,28 +504,17 @@ class BaseGNN(torch.nn.Module):
         return x
 
 if __name__ == "__main__":
-    egnn = EGNN_Encoder(device='cpu')
     
-    from process.t_graph import Graph_Featurizer
-    from openbabel import pybel
-    
-    lig = next(pybel.readfile("sdf", './1aq7_ligand.sdf'))
-    lig = pybel.readstring("smi", "CCCC")
-    ligand_features, ligand_coords = Graph_Featurizer().get_node_features(lig, source='ligand', complex_bool=False)
-    lig_edges, lig_attrs = Graph_Featurizer().get_bond_based_edges(lig)
-    print(ligand_features.shape, ligand_coords.shape, len(lig_edges), len(lig_attrs))
-    
-    lig.addh()
-    lig.make3D()
-    lig.localopt()
-    lig.write("test.sdf")
-    
-    ligand_features=torch.tensor(ligand_features, dtype=torch.float)
-    ligand_coords = torch.tensor(ligand_coords, dtype=torch.float32)
-    ligand_edges=torch.tensor(lig_edges, dtype=torch.long).t().contiguous()
-    ligand_edge_attr=torch.tensor(lig_attrs, dtype=torch.float)
-    
-    print(ligand_features.shape, ligand_coords.shape, ligand_edges.shape, ligand_edge_attr.shape)
-    
-    egnn(ligand_features, ligand_coords, ligand_edges, ligand_edge_attr)
-    
+    model = Property_simple('CNN', 3)
+    molnet_param =sum([p.numel() for p in model.molnet.parameters() if p.requires_grad])
+    predictor_param =sum([p.numel() for p in model.predictor.parameters() if p.requires_grad])
+    print(f'Number of Molecule Encoder parameter: {molnet_param:,}')
+    print(f'Number of Predictor parameter: {predictor_param:,}')
+    print(f'Number of learnable parameter: {molnet_param + predictor_param:,}')
+
+    model_param_group = [{"params": model.parameters()}]
+    ## calculate the number of learnable parameter
+    total_param = 0
+    for group in model_param_group:
+        total_param += sum(param.numel() for param in group['params'] if param.requires_grad)
+    print(f'Number of learnable parameter: {total_param:,}')

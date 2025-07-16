@@ -611,8 +611,8 @@ def main():
         print(f"Valid Score: {val_results.mean():.1f} (±{val_results.std():.2f})")
         print(f"Test Score: {test_results.mean():.1f} (±{test_results.std():.2f})")
     elif task_type == 'reg':
-        print(f"Valid Score: {val_results.mean():.6f} (±{val_results.std():.2f})")
-        print(f"Test Score: {test_results.mean():.6f} (±{test_results.std():.2f})")
+        print(f"Valid Score: {val_results.mean():.3f} (±{val_results.std():.2f})")
+        print(f"Test Score: {test_results.mean():.3f} (±{test_results.std():.2f})")
 
 if __name__ == "__main__":
     main()

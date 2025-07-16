@@ -1,5 +1,6 @@
 import warnings; warnings.filterwarnings('ignore') ##
 
+import copy
 import argparse
 
 from tqdm import tqdm
@@ -82,10 +83,15 @@ def train_reg(args, model, device, loader, optimizer):
     
     return avg_train_loss ## addition: return avg_train_loss
 
+def get_label(x):
+    sig = 1 / (1+np.exp(-x)) # np.exp는 밑이 e인 지수함수로 변환
+    return (sig >= 0.5).astype(int)
+
 def eval(args, model, device, loader, test=False):
     model.eval()
     y_true = []
     y_scores = []
+    smiles_list = []
     total_loss = 0.0
     total_batches = 0
 
@@ -97,6 +103,9 @@ def eval(args, model, device, loader, test=False):
 
         y_true.append(batch.y.view(pred.shape))
         y_scores.append(pred)
+        
+        for smi in batch.smiles:
+            smiles_list.append(smi[0])
         
         # Calculate loss only if not test
         if not test:
@@ -110,13 +119,19 @@ def eval(args, model, device, loader, test=False):
 
     y_true = torch.cat(y_true, dim = 0).cpu().numpy()
     y_scores = torch.cat(y_scores, dim = 0).cpu().numpy()
+    smiles_list = np.array(smiles_list)
 
     roc_list = []
+    task_list = {}
     for i in range(y_true.shape[1]):
         #AUC is only defined when there is at least one positive data.
         if np.sum(y_true[:,i] == 1) > 0 and np.sum(y_true[:,i] == -1) > 0:
             is_valid = y_true[:,i]**2 > 0
             roc_list.append(roc_auc_score((y_true[is_valid,i] + 1)/2, y_scores[is_valid,i]))
+            
+            save_y_true = ((y_true[is_valid,i] + 1) / 2).astype(int)
+            save_y_pred = get_label(y_scores[is_valid,i])
+            task_list[i] = (smiles_list[is_valid], save_y_true, save_y_pred)
 
     if len(roc_list) < y_true.shape[1]:
         print("Some target is missing!")
@@ -124,16 +139,17 @@ def eval(args, model, device, loader, test=False):
 
     avg_auc = sum(roc_list)/len(roc_list) #y_true.shape[1]
     if test:
-        return avg_auc
+        return avg_auc, task_list
     else:
         avg_loss = total_loss / total_batches
         return avg_auc, avg_loss
 
-def eval_reg(args, model, device, loader):
+def eval_reg(args, model, device, loader, test=False):
     # code from HiMol's finetune.py
     model.eval()
     y_true = []
     y_scores = []
+    smiles_list = []
     
     for step, batch in enumerate(tqdm(loader, desc='Iteration')):
         batch = batch.to(device)
@@ -144,14 +160,22 @@ def eval_reg(args, model, device, loader):
         y_true.append(batch.y.view(pred.shape))
         y_scores.append(pred)
         
+        for smi in batch.smiles:
+            smiles_list.append(smi[0])
+        
     y_true = torch.cat(y_true, dim=0).cpu().numpy().flatten()
     y_scores = torch.cat(y_scores, dim=0).cpu().numpy().flatten()
+    smiles_list = np.array(smiles_list)
     
     mse = mean_squared_error(y_true, y_scores)
     mae = mean_absolute_error(y_true, y_scores)
     rmse = np.sqrt(mean_squared_error(y_true,y_scores))
 
-    return mse, mae, rmse
+    if test:
+        task_list = {0: (smiles_list, y_true, y_scores)}
+        return mse, mae, rmse, task_list
+    else:
+        return mse, mae, rmse
 
 def define_parser(parser: argparse.ArgumentParser):
     ## original
@@ -261,21 +285,6 @@ def exec_main(args):
     data_root = "dataset/"
     from data.loader import MoleculeDataset ##
     dataset = MoleculeDataset(data_root + args.dataset, dataset=args.dataset, feature=args.feature)
-    
-    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='2D-GNN')
-    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='FP-Morgan')
-    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='FP-MACCS')
-    # dataset = MoleculeDataset(data_root + 'bace', dataset='bace', feature='CNN')
-    # dataset = MoleculeDataset(data_root + 'bbbp', dataset='bbbp', feature='2D-GNN')
-    # dataset = MoleculeDataset(data_root + 'tox21', dataset='tox21', feature='2D-GNN')
-    # dataset = MoleculeDataset(data_root + 'toxcast', dataset='toxcast', feature='2D-GNN')
-    # dataset = MoleculeDataset(data_root + 'sider', dataset='sider', feature='2D-GNN')
-    # dataset = MoleculeDataset(data_root + 'clintox', dataset='clintox', feature='2D-GNN-tuto')
-    # dataset = MoleculeDataset(data_root + 'clintox', dataset='clintox', feature='2D-GNN')
-    # dataset = MoleculeDataset(data_root + 'hiv', dataset='hiv', feature='2D-GNN')
-    # smiles_list = pd.read_csv(data_root + 'clintox' + '/processed/smiles.csv', header=None)[0].tolist()
-    # train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
-    # len(smiles_list)
 
     print('[dataset]') ##
     print(dataset)
@@ -320,62 +329,8 @@ def exec_main(args):
                 model.from_pretrained(args.input_model_file, device)
     else:
         from model.experiment_model import Property_simple
-        if args.feature == '2D-GNN-copy':
-            if args.filename == '20250708-2L-GIN':
-                model = Property_simple('2D-GNN-copy-2L-GIN', num_tasks)
-            elif args.filename == '20250708-5L-GIN':
-                model = Property_simple('2D-GNN-copy-5L-GIN', num_tasks)
-            elif args.filename == '20250708-2L-GCN':
-                model = Property_simple('2D-GNN-copy-2L-GCN', num_tasks)
-            elif args.filename == '20250708-5L-GCN':
-                model = Property_simple('2D-GNN-copy-5L-GCN', num_tasks)
-            elif args.filename == '20250708-2L-GIN-emb':
-                model = Property_simple('2D-GNN-copy-2L-GIN-emb', num_tasks)
-            elif args.filename == '20250708-5L-GIN-emb':
-                model = Property_simple('2D-GNN-copy-5L-GIN-emb', num_tasks)
-            elif args.filename == '20250708-2L-GCN-emb':
-                model = Property_simple('2D-GNN-copy-2L-GCN-emb', num_tasks)
-            elif args.filename == '20250708-5L-GCN-emb':
-                model = Property_simple('2D-GNN-copy-5L-GCN-emb', num_tasks)
-                
-            elif args.filename == '20250708-2L-GIN-emb-fit':
-                model = Property_simple('2D-GNN-copy-2L-GIN-emb-fit', num_tasks)
-            elif args.filename == '20250708-5L-GIN-emb-fit':
-                model = Property_simple('2D-GNN-copy-5L-GIN-emb-fit', num_tasks)
-            elif args.filename == '20250708-2L-GCN-emb-fit':
-                model = Property_simple('2D-GNN-copy-2L-GCN-emb-fit', num_tasks)
-            elif args.filename == '20250708-5L-GCN-emb-fit':
-                model = Property_simple('2D-GNN-copy-5L-GCN-emb-fit', num_tasks)
-        
-        elif args.feature == '2D-GNN-copy2':
-            if args.filename == '20250708-2L-GIN':
-                model = Property_simple('2D-GNN-copy2-2L-GIN', num_tasks)
-            elif args.filename == '20250708-5L-GIN':
-                model = Property_simple('2D-GNN-copy2-5L-GIN', num_tasks)
-            elif args.filename == '20250708-2L-GCN':
-                model = Property_simple('2D-GNN-copy2-2L-GCN', num_tasks)
-            elif args.filename == '20250708-5L-GCN':
-                model = Property_simple('2D-GNN-copy2-5L-GCN', num_tasks)
-        
-        elif args.feature == '2D-GNN-copy3':
-            if args.filename == '20250708-2L-GIN':
-                model = Property_simple('2D-GNN-copy3-2L-GIN', num_tasks)
-            elif args.filename == '20250708-5L-GIN':
-                model = Property_simple('2D-GNN-copy3-5L-GIN', num_tasks)
-            elif args.filename == '20250708-2L-GCN':
-                model = Property_simple('2D-GNN-copy3-2L-GCN', num_tasks)
-            elif args.filename == '20250708-5L-GCN':
-                model = Property_simple('2D-GNN-copy3-5L-GCN', num_tasks)
-
-        elif args.feature == '2D-GNN-tuto':
-            if args.filename == '20250708-2L-GIN':
-                model = Property_simple('2D-GNN-tuto-2L-GIN', num_tasks)
-            elif args.filename == '20250708-5L-GIN':
-                model = Property_simple('2D-GNN-tuto-5L-GIN', num_tasks)
-            elif args.filename == '20250708-2L-GCN':
-                model = Property_simple('2D-GNN-tuto-2L-GCN', num_tasks)
-            elif args.filename == '20250708-5L-GCN':
-                model = Property_simple('2D-GNN-tuto-5L-GCN', num_tasks)
+        if args.feature == '2D-GNN-tuto':
+            model = Property_simple('2D-GNN', num_tasks)
         else:
             model = Property_simple(args.feature, num_tasks)
     
@@ -415,7 +370,7 @@ def exec_main(args):
         val_acc_list = []
         test_acc_list = []
 
-        best_test_auc = [0, 0, 0, 0, None] # order: [train ROC-AUC, valid ROC-AUC, test ROC-AUC, best ROC-AUC epoch, best model state]
+        best_test_auc = [0, 0, 0, 0, None, None] # order: [train ROC-AUC, valid ROC-AUC, test ROC-AUC, best ROC-AUC epoch, model_state_dict,]
         for epoch in range(1, args.epochs+1):
             print("==== epoch " + str(epoch))
             
@@ -430,7 +385,7 @@ def exec_main(args):
                 train_acc = 0
                 
             val_acc, val_loss = eval(args, model, device, val_loader)
-            test_acc = eval(args, model, device, test_loader, test=True)
+            test_acc, task_list = eval(args, model, device, test_loader, test=True)
 
             # Log to wandb
             if args.use_wandb:
@@ -442,7 +397,9 @@ def exec_main(args):
             print("train AUC: %f val AUC: %f test AUC: %f" % (train_acc, val_acc, test_acc)) ## modify: style
             
             if best_test_auc[1] < val_acc: # evaluate based on validation sets
-                best_test_auc = [train_acc, val_acc, test_acc, epoch, model.state_dict().copy()]
+                checkpoint = copy.deepcopy(model.state_dict())
+                best_test_auc = [train_acc, val_acc, test_acc, epoch, checkpoint, task_list]
+                
 
             val_acc_list.append(val_acc)
             test_acc_list.append(test_acc)
@@ -454,7 +411,7 @@ def exec_main(args):
         val_mse_list, val_mae_list, val_rmse_list = [], [], []
         test_mse_list, test_mae_list, test_rmse_list = [], [], []
         
-        best_test_mse = [1000, 1000, 1000, 0, None] # order: [train metric, valid metric, test metric, best epoch, best model state]
+        best_test_mse = [1000, 1000, 1000, 0, None, None] # order: [train ROC-AUC, valid ROC-AUC, test ROC-AUC, best ROC-AUC epoch, task_list]
         for epoch in range(1, args.epochs+1):
             print("==== epoch " + str(epoch))
             
@@ -469,19 +426,21 @@ def exec_main(args):
                 train_mse, train_mae, train_rmse = 0, 0, 0
                 
             val_mse, val_mae, val_rmse = eval_reg(args, model, device, val_loader)
-            test_mse, test_mae, test_rmse = eval_reg(args, model, device, test_loader)
+            test_mse, test_mae, test_rmse, task_list = eval_reg(args, model, device, test_loader, test=True)
 
             if args.dataset in ['esol', 'freesolv', 'lipophilicity']:
                 print("train RMSE: %.6f val RMSE: %.6f test RMSE: %.6f" % (train_rmse, val_rmse, test_rmse))
 
                 if best_test_mse[1] > val_rmse: # evaluate based on validation sets
-                    best_test_mse = [train_rmse, val_rmse, test_rmse, epoch, model.state_dict().copy()]
+                    checkpoint = copy.deepcopy(model.state_dict())
+                    best_test_mse = [train_rmse, val_rmse, test_rmse, epoch, checkpoint, task_list]
 
             elif args.dataset in ['qm7', 'qm8', 'qm9']:
                 print("train MAE: %.6f val MAE: %.6f test MAE: %.6f" % (train_mae, val_mae, test_mae))
                 
                 if best_test_mse[1] > val_mae: # evaluate based on validation sets
-                    best_test_mse = [train_mae, val_mae, test_mae, epoch, model.state_dict().copy()]
+                    checkpoint = copy.deepcopy(model.state_dict())
+                    best_test_mse = [train_mae, val_mae, test_mae, epoch, checkpoint, task_list]
 
             # Log to wandb
             if args.use_wandb:
@@ -489,6 +448,7 @@ def exec_main(args):
                     "train_loss": train_mse,
                     "val_loss": val_mse
                 })
+
 
             train_mse_list.append(train_mse); train_mae_list.append(train_mae); train_rmse_list.append(train_rmse)
             val_mse_list.append(val_mse); val_mae_list.append(val_mae); val_rmse_list.append(val_rmse)
@@ -566,8 +526,8 @@ def main():
         else:
             print(f'================== {i+1} exec - data seed: {args.seed}, run seed: {args.runseed} ==================')
 
-        train_result, val_result, test_result, epoch, best_model_state, task_type = exec_main(args)
-        
+
+        train_result, val_result, test_result, epoch, checkpoint, task_list, task_type = exec_main(args)
         print("[BEST - Epoch: %d] train: %.6f val: %.6f test: %.6f" % (epoch, train_result, val_result, test_result))
 
         if task_type == 'cls':
@@ -588,16 +548,16 @@ def main():
             else:
                 result_df.to_csv(fname, mode='a', index=False, header=False)
             
-            # Save best model for this seed
-            if best_model_state is not None:
-                model_save_dir = os.path.join('experiments', args.feature, 'models')
-                os.makedirs(model_save_dir, exist_ok=True)
-                model_filename = f"{args.project}_{args.runseed}_best_model.pth"
-                model_save_path = os.path.join(model_save_dir, model_filename)
-                
-                print(model_save_path)
-                torch.save(best_model_state, model_save_path)
-                print(f"Best model saved: {model_save_path}")
+            ## custom
+            torch.save(checkpoint, Path(fname).parent /f'{args.project}_{args.runseed}_checkpoint.pth')
+            
+            from functools import reduce
+            task_result = []
+            for key in task_list.keys():
+                smiles_list, y_true, y_pred = task_list[key]
+                task_result.append(pd.DataFrame({'smiles': smiles_list, f'task_{key}_yt': y_true, f'task_{key}_yp': y_pred}))
+            merge_df = reduce(lambda left, right: pd.merge(left, right, on='smiles', how='outer'), task_result)
+            merge_df.to_csv(Path(fname).parent /f'{args.project}_{args.runseed}_prediction.csv', index=False, header=True)
         
         train_results = np.append(train_results, train_result)
         val_results = np.append(val_results, val_result)
@@ -621,8 +581,8 @@ def main():
         print(f"Valid Score: {val_results.mean():.1f} (±{val_results.std():.2f})")
         print(f"Test Score: {test_results.mean():.1f} (±{test_results.std():.2f})")
     elif task_type == 'reg':
-        print(f"Valid Score: {val_results.mean():.2f} (±{val_results.std():.2f})")
-        print(f"Test Score: {test_results.mean():.2f} (±{test_results.std():.2f})")
+        print(f"Valid Score: {val_results.mean():.3f} (±{val_results.std():.2f})")
+        print(f"Test Score: {test_results.mean():.3f} (±{test_results.std():.2f})")
 
 if __name__ == "__main__":
     main()

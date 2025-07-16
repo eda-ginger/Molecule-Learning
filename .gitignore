@@ -498,3 +498,5 @@ dataset/
 *.txt
 dta_dataset/
 experiments/
+
+desc.csv
