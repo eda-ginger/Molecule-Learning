@@ -57,6 +57,8 @@ class FPNet(torch.nn.Module):
         return feats
 
 
+
+
 class CNNNet(torch.nn.Module):
     def __init__(self, n_filters=32):
         super(CNNNet, self).__init__()
@@ -317,13 +319,18 @@ class Property_norm(torch.nn.Module):
 class Property_simple(torch.nn.Module): # not use batch norm
     def __init__(self, feature_type, num_tasks):
         super(Property_simple, self).__init__()
-        
         if feature_type == 'FP-Morgan':
             self.molnet = FPNet(dim=1024)
             mol_out = 64
         elif feature_type == 'FP-MACCS':
             self.molnet = FPNet(dim=167)
             mol_out = 64
+
+        # Descriptor
+        elif feature_type == 'DESC':
+            self.molnet = FPNet(dim=115)
+            mol_out = 64
+            
         elif feature_type == 'ChemBERTa':
             self.molnet = FPNet(dim=384)
             mol_out = 64
@@ -423,6 +430,9 @@ class Property_simple(torch.nn.Module): # not use batch norm
         elif feature_type == 'CNN':
             self.molnet = CNNNet()
             mol_out = 64
+        
+        else:
+            raise ValueError(f"Unsupported feature type: {feature_type}")
             
         self.predictor = nn.Sequential(
             nn.Linear(mol_out, 256),

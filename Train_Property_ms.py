@@ -285,6 +285,8 @@ def exec_main(args):
     data_root = "dataset/"
     from data.loader import MoleculeDataset ##
     dataset = MoleculeDataset(data_root + args.dataset, dataset=args.dataset, feature=args.feature)
+    
+    print(args)
 
     print('[dataset]') ##
     print(dataset)
@@ -293,6 +295,7 @@ def exec_main(args):
         print("scaffold spllit ...")
         smiles_list = pd.read_csv(data_root + args.dataset + '/processed/smiles.csv', header=None)[0].tolist()
         train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
+
     elif args.split == "random":
         print("random split ...")
         train_dataset, valid_dataset, test_dataset = random_split(dataset, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1, seed = args.seed)
