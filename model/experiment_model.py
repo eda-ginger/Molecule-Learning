@@ -316,24 +316,76 @@ class Property_norm(torch.nn.Module):
         return pred
 
 
+class LLMNet(torch.nn.Module):
+    def __init__(self, dim, how='mean'):
+        super(LLMNet, self).__init__()
+        
+        self.how = how
+        self.layer1 = torch.nn.Linear(dim, dim // 2)
+        self.layer2 = torch.nn.Linear(dim // 2, dim // 4)
+        
+    def forward(self, drug):
+        feats = drug.x
+        if self.how == 'mean':
+            feats = feats.mean(dim=1)
+        elif self.how == 'max':
+            feats = feats.max(dim=1)
+        elif self.how == 'last':
+            feats = feats[:, -1, :]
+        else:
+            raise ValueError(f"Unsupported how: {self.how}")
+
+        feats = self.layer1(feats)
+        feats = F.relu(feats)
+        feats = self.layer2(feats)
+        feats = F.relu(feats)
+        return feats
+
+
+
 class Property_simple(torch.nn.Module): # not use batch norm
     def __init__(self, feature_type, num_tasks):
         super(Property_simple, self).__init__()
+        
+        # FP
         if feature_type == 'FP-Morgan':
             self.molnet = FPNet(dim=1024)
             mol_out = 64
         elif feature_type == 'FP-MACCS':
             self.molnet = FPNet(dim=167)
             mol_out = 64
+        
+        # LLM
+        elif feature_type == 'Gemma-mean':
+            self.molnet = LLMNet(dim=2560, how='mean')
+            mol_out = 2560 // 4
+        elif feature_type == 'Gemma-max':
+            self.molnet = LLMNet(dim=2560, how='max')
+            mol_out = 2560 // 4
+        elif feature_type == 'Gemma-last':
+            self.molnet = LLMNet(dim=2560, how='last')
+            mol_out = 2560 // 4
+        elif feature_type == 'LLama-mean':
+            self.molnet = LLMNet(dim=2560, how='mean')
+            mol_out = 2560 // 4
+        elif feature_type == 'LLama-max':
+            self.molnet = LLMNet(dim=2560, how='max')
+            mol_out = 2560 // 4
+        elif feature_type == 'LLama-last':
+            self.molnet = LLMNet(dim=2560, how='last')
+            mol_out = 2560 // 4
 
         # Descriptor
         elif feature_type == 'DESC':
             self.molnet = FPNet(dim=115)
             mol_out = 64
-            
+        
+        # ChemBERTa
         elif feature_type == 'ChemBERTa':
             self.molnet = FPNet(dim=384)
             mol_out = 64
+        
+        # 2D-GNN
         elif feature_type == '2D-GNN':
             self.molnet = GCNNet(dim=133)
             mol_out = 133
@@ -421,16 +473,17 @@ class Property_simple(torch.nn.Module): # not use batch norm
             self.molnet = BaseGNN(num_layers=5, gnn_type='gcn', emb=False, bf_dim=133)
             mol_out = 300        
         
+        # 3D-GNN
         elif feature_type == '3D-GNN':
             self.molnet = Net3D()
             mol_out = 64
-        elif feature_type == '3D-GNN-egnn':
-            self.molnet = EGNN_Encoder(n_layers=2)
-            mol_out = 64
+        
+        # CNN
         elif feature_type == 'CNN':
             self.molnet = CNNNet()
             mol_out = 64
         
+        # Error
         else:
             raise ValueError(f"Unsupported feature type: {feature_type}")
             

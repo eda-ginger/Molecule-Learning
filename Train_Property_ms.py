@@ -295,7 +295,6 @@ def exec_main(args):
         print("scaffold spllit ...")
         smiles_list = pd.read_csv(data_root + args.dataset + '/processed/smiles.csv', header=None)[0].tolist()
         train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
-
     elif args.split == "random":
         print("random split ...")
         train_dataset, valid_dataset, test_dataset = random_split(dataset, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1, seed = args.seed)
@@ -334,6 +333,8 @@ def exec_main(args):
         from model.experiment_model import Property_simple
         if args.feature == '2D-GNN-tuto':
             model = Property_simple('2D-GNN', num_tasks)
+        elif args.feature in ['gemma', 'gemma-desc', 'llama', 'llama-desc']:
+            model = Property_simple(args.filename, num_tasks)
         else:
             model = Property_simple(args.feature, num_tasks)
     
