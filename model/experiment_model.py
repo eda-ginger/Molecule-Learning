@@ -356,22 +356,22 @@ class Property_simple(torch.nn.Module): # not use batch norm
             mol_out = 64
         
         # LLM
-        elif feature_type == 'Gemma-mean':
+        elif feature_type == 'gemma-mean':
             self.molnet = LLMNet(dim=2560, how='mean')
             mol_out = 2560 // 4
-        elif feature_type == 'Gemma-max':
+        elif feature_type == 'gemma-max':
             self.molnet = LLMNet(dim=2560, how='max')
             mol_out = 2560 // 4
-        elif feature_type == 'Gemma-last':
+        elif feature_type == 'gemma-last':
             self.molnet = LLMNet(dim=2560, how='last')
             mol_out = 2560 // 4
-        elif feature_type == 'LLama-mean':
+        elif feature_type == 'llama-mean':
             self.molnet = LLMNet(dim=2560, how='mean')
             mol_out = 2560 // 4
-        elif feature_type == 'LLama-max':
+        elif feature_type == 'llama-max':
             self.molnet = LLMNet(dim=2560, how='max')
             mol_out = 2560 // 4
-        elif feature_type == 'LLama-last':
+        elif feature_type == 'llama-last':
             self.molnet = LLMNet(dim=2560, how='last')
             mol_out = 2560 // 4
 
