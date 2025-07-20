@@ -317,24 +317,14 @@ class Property_norm(torch.nn.Module):
 
 
 class LLMNet(torch.nn.Module):
-    def __init__(self, dim, how='mean'):
+    def __init__(self, dim):
         super(LLMNet, self).__init__()
-        
-        self.how = how
         self.layer1 = torch.nn.Linear(dim, dim // 2)
         self.layer2 = torch.nn.Linear(dim // 2, dim // 4)
         
     def forward(self, drug):
-        feats = drug.x
-        if self.how == 'mean':
-            feats = feats.mean(dim=1)
-        elif self.how == 'max':
-            feats = feats.max(dim=1)
-        elif self.how == 'last':
-            feats = feats[:, -1, :]
-        else:
-            raise ValueError(f"Unsupported how: {self.how}")
-
+        feats = drug.x.float()
+        print(feats.shape)
         feats = self.layer1(feats)
         feats = F.relu(feats)
         feats = self.layer2(feats)
@@ -356,23 +346,8 @@ class Property_simple(torch.nn.Module): # not use batch norm
             mol_out = 64
         
         # LLM
-        elif feature_type == 'gemma-mean':
-            self.molnet = LLMNet(dim=2560, how='mean')
-            mol_out = 2560 // 4
-        elif feature_type == 'gemma-max':
-            self.molnet = LLMNet(dim=2560, how='max')
-            mol_out = 2560 // 4
-        elif feature_type == 'gemma-last':
-            self.molnet = LLMNet(dim=2560, how='last')
-            mol_out = 2560 // 4
-        elif feature_type == 'llama-mean':
-            self.molnet = LLMNet(dim=2560, how='mean')
-            mol_out = 2560 // 4
-        elif feature_type == 'llama-max':
-            self.molnet = LLMNet(dim=2560, how='max')
-            mol_out = 2560 // 4
-        elif feature_type == 'llama-last':
-            self.molnet = LLMNet(dim=2560, how='last')
+        elif feature_type == 'gemma-desc':
+            self.molnet = LLMNet(dim=2560)
             mol_out = 2560 // 4
 
         # Descriptor

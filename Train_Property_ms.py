@@ -333,8 +333,8 @@ def exec_main(args):
         from model.experiment_model import Property_simple
         if args.feature == '2D-GNN-tuto':
             model = Property_simple('2D-GNN', num_tasks)
-        elif args.feature in ['gemma', 'gemma-desc', 'llama', 'llama-desc']:
-            model = Property_simple(args.filename, num_tasks)
+        elif 'gemma-desc' in args.feature:
+            model = Property_simple('gemma-desc', num_tasks)
         else:
             model = Property_simple(args.feature, num_tasks)
     

@@ -490,7 +490,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+
 # data
+llm/
 logs/
 wandb/
 dataset/
