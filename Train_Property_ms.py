@@ -251,6 +251,8 @@ def exec_main(args):
     else:
         task_type = 'reg'
     
+
+    
     #Bunch of classification tasks
     
     if args.dataset == "tox21":
@@ -314,29 +316,36 @@ def exec_main(args):
 
     #set up model 
     print('### Setup Model ###')
-    if args.feature == '2D-GNN':
-        if args.filename == '20250630-2':
-            model = GNN_graphpred(2, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
-        else:
-            model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
-        if args.input_model_file != "" and args.ft_type != 'no_pretrain':
-            print('Load Pretrained parameter ...')
-
-            if "SimSGT" in args.input_model_file:
-                model_file = os.path.join('pretrain', args.input_model_file)
-                msg = model.gnn.load_state_dict(torch.load(model_file), map_location='cpu')
-                print(msg)
-        
-            else:        
-                model.from_pretrained(args.input_model_file, device)
-    else:
+    if args.filename == 'deep':
         from model.experiment_model import Property_simple
         if args.feature == '2D-GNN-tuto':
-            model = Property_simple('2D-GNN', num_tasks)
+            model = Property_simple('deep_2D-GNN', num_tasks)
         elif 'gemma-desc' in args.feature:
-            model = Property_simple('gemma-desc', num_tasks)
+            model = Property_simple('deep_gemma-desc', num_tasks)
         else:
-            model = Property_simple(args.feature, num_tasks)
+            model = Property_simple('deep_' + args.feature, num_tasks)
+    else:
+        if args.feature == '2D-GNN':
+            model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, graph_pooling = args.graph_pooling, gnn_type = args.gnn_type)
+            if args.input_model_file != "" and args.ft_type != 'no_pretrain':
+                print('Load Pretrained parameter ...')
+
+                if "SimSGT" in args.input_model_file:
+                    model_file = os.path.join('pretrain', args.input_model_file)
+                    msg = model.gnn.load_state_dict(torch.load(model_file), map_location='cpu')
+                    print(msg)
+            
+                else:        
+                    model.from_pretrained(args.input_model_file, device)
+        else:
+            from model.experiment_model import Property_simple
+            if args.feature == '2D-GNN-tuto':
+                model = Property_simple('2D-GNN', num_tasks)
+            elif 'gemma-desc' in args.feature:
+                model = Property_simple('gemma-desc', num_tasks)
+            else:
+                model = Property_simple(args.feature, num_tasks)
+
     
     model.to(device)
     print('[model]') ##
